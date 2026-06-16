@@ -287,8 +287,9 @@ static void start_script_runner(const char *script_name)
 
     /* Use a pseudoterminal so the child sees a tty on stdout/stderr.
      * This causes shells and most programs to flush output line by line,
-     * giving continuous log output instead of large buffered chunks.
-     * Use the Linux-native /dev/ptmx approach to avoid needing posix_openpt()
+     * giving continuous log output instead of large buffered chunks. */
+#ifdef __linux__
+    /* Use the Linux-native /dev/ptmx approach to avoid needing posix_openpt()
      * which may not be available on musl-based cross-compilers. */
     int master_fd = open("/dev/ptmx", O_RDWR | O_NOCTTY);
     if (master_fd < 0) {
@@ -307,6 +308,24 @@ static void start_script_runner(const char *script_name)
     }
     char slave_path[64];
     snprintf(slave_path, sizeof(slave_path), "/dev/pts/%u", ptnum);
+#else
+    /* POSIX fallback for macOS and other non-Linux platforms. */
+    int master_fd = posix_openpt(O_RDWR | O_NOCTTY);
+    if (master_fd < 0) {
+        return;
+    }
+    if (grantpt(master_fd) != 0 || unlockpt(master_fd) != 0) {
+        close(master_fd);
+        return;
+    }
+    char slave_path[64];
+    char *ptsname_result = ptsname(master_fd);
+    if (!ptsname_result) {
+        close(master_fd);
+        return;
+    }
+    snprintf(slave_path, sizeof(slave_path), "%s", ptsname_result);
+#endif
 
     /* Disable echo and LF->CRLF translation so output reads as plain text. */
     {

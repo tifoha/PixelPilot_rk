@@ -4,18 +4,27 @@
 #include <stdlib.h>
 #include <termios.h>
 #include <unistd.h>
+#ifndef USE_SIMULATOR
 #include <gpiod.h>
+#endif
 #include <dirent.h>
 #include <string.h>
 #include <time.h>
+#ifndef USE_SIMULATOR
 #include <yaml-cpp/yaml.h>
+#endif
 #include <glob.h>
 #include "main.h"
 #include "lvgl/lvgl.h"
 #include "input.h"
 #include "gsmenu/gs_system.h"
+#ifdef USE_SIMULATOR
+#include <SDL2/SDL.h>
+#endif
 
+#ifndef USE_SIMULATOR
 extern YAML::Node config;
+#endif
 extern lv_group_t *main_group;
 extern lv_indev_t * indev_drv;
 
@@ -433,10 +442,36 @@ void toggle_screen(void) {
     }
 }
 
+static void handle_char_input(char c);
+
 // Handle WASD input and convert to LVGL key codes
 void handle_keyboard_input(void) {
+#ifdef USE_SIMULATOR
+    /* Drain SDL window key events and map them to the same char codes */
+    SDL_PumpEvents();
+    SDL_Event sdl_event;
+    while (SDL_PeepEvents(&sdl_event, 1, SDL_GETEVENT, SDL_KEYDOWN, SDL_KEYDOWN) > 0) {
+        char c = '\0';
+        switch (sdl_event.key.keysym.sym) {
+            case SDLK_w: case SDLK_UP:              c = 'w'; break;
+            case SDLK_s: case SDLK_DOWN:            c = 's'; break;
+            case SDLK_a: case SDLK_LEFT:            c = 'a'; break;
+            case SDLK_d: case SDLK_RIGHT:           c = 'd'; break;
+            case SDLK_RETURN: case SDLK_KP_ENTER:  c = '\n'; break;
+            case SDLK_t:                             c = 't'; break;
+            case SDLK_q:                             c = 'q'; break;
+            default: break;
+        }
+        if (c) handle_char_input(c);
+    }
+#endif
     char c;
     if (read(STDIN_FILENO, &c, 1) > 0) {
+        handle_char_input(c);
+    }
+}
+
+static void handle_char_input(char c) {
         switch(c) {
             case 'w':
             case 'W':
@@ -546,7 +581,6 @@ void handle_keyboard_input(void) {
                 raise(SIGINT);
                 break;
         }
-    }
 }
 
 // Custom function to simulate keyboard input
@@ -583,12 +617,19 @@ static void virtual_keyboard_read(lv_indev_t * indev, lv_indev_data_t * data) {
 lv_indev_t * create_virtual_keyboard() {
 
     set_stdin_nonblock(); // setup keyboard input from stdin
-#ifndef USE_SIMULATOR 
+#ifndef USE_SIMULATOR
     setup_gpio(config);          // Initialize GPIO
 #endif
     lv_indev_t * indev_drv = lv_indev_create();
     lv_indev_set_type(indev_drv, LV_INDEV_TYPE_KEYPAD);
     lv_indev_set_read_cb(indev_drv, virtual_keyboard_read);
+#ifdef USE_SIMULATOR
+    /* lv_sdl_keyboard_handler() walks all KEYPAD indevs and dereferences their
+     * driver_data as an lv_sdl_keyboard_t*. Set a zeroed dummy block so it
+     * doesn't crash on our custom indev that has no SDL driver data. */
+    static char _dummy_sdl_kb_data[64] = {0};
+    lv_indev_set_driver_data(indev_drv, _dummy_sdl_kb_data);
+#endif
 
     lv_indev_enable(indev_drv, true);
 

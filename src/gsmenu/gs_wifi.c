@@ -434,6 +434,7 @@ void wifi_page_load_callback(lv_obj_t * page)
     lv_obj_add_flag(pwd_row, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(wifi_kb, LV_OBJ_FLAG_HIDDEN);
 
+#ifndef USE_SIMULATOR
     if (restream_get_enabled())
         lv_obj_add_state(lv_obj_get_child_by_type(restream, 0, &lv_switch_class),
                          LV_STATE_CHECKED);
@@ -447,6 +448,7 @@ void wifi_page_load_callback(lv_obj_t * page)
         lv_dropdown_set_selected(ip_dropdown,
             find_dropdown_option_index(clients, restream_get_manual_ip()));
     }
+#endif
 }
 
 /* ── Event handlers ──────────────────────────────────────────────────────── */

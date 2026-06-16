@@ -38,6 +38,19 @@ typedef struct {
 } CommandResult;
 
 
+static const char* gsmenu_backend = NULL;
+
+void set_gsmenu_backend(const char* script) {
+    gsmenu_backend = script;
+}
+
+const char* get_gsmenu_backend(void) {
+    if (gsmenu_backend && gsmenu_backend[0]) return gsmenu_backend;
+    const char* env = getenv("GSMENU_BACKEND");
+    if (env && env[0]) return env;
+    return "gsmenu.sh";
+}
+
 lv_group_t * current_group;
 lv_group_t * error_group = NULL;
 extern lv_obj_t * menu;
@@ -278,7 +291,8 @@ void generic_switch_event_cb(lv_event_t * e)
     }
     lv_obj_t * target = lv_event_get_target(e);
     thread_data_t * user_data = (thread_data_t *) lv_event_get_user_data(e);
-    char final_command[200] = "gsmenu.sh set ";
+    char final_command[200];
+    snprintf(final_command, sizeof(final_command), "%s set ", get_gsmenu_backend());
     strcat(final_command,user_data->menu_page_data->type);
     strcat(final_command," ");
     strcat(final_command,user_data->menu_page_data->page);
@@ -317,7 +331,8 @@ void generic_checkbox_event_cb(lv_event_t * e)
     }
     lv_obj_t * target = lv_event_get_target(e);
     thread_data_t * user_data = (thread_data_t *) lv_event_get_user_data(e);
-    char final_command[200] = "gsmenu.sh set ";
+    char final_command[200];
+    snprintf(final_command, sizeof(final_command), "%s set ", get_gsmenu_backend());
     strcat(final_command,user_data->menu_page_data->type);
     strcat(final_command," ");
     strcat(final_command,user_data->menu_page_data->page);
@@ -351,7 +366,8 @@ void generic_dropdown_event_cb(lv_event_t * e)
 {
     lv_obj_t * target = lv_event_get_target(e);
     thread_data_t * user_data = (thread_data_t*) lv_event_get_user_data(e);
-    char final_command[200] = "gsmenu.sh set ";
+    char final_command[200];
+    snprintf(final_command, sizeof(final_command), "%s set ", get_gsmenu_backend());
     strcat(final_command,user_data->menu_page_data->type);
     strcat(final_command," ");
     strcat(final_command,user_data->menu_page_data->page);
@@ -393,7 +409,8 @@ void generic_slider_event_cb(lv_event_t * e)
         }
     }
     thread_data_t * user_data = lv_event_get_user_data(e);
-    char final_command[200] = "gsmenu.sh set ";
+    char final_command[200];
+    snprintf(final_command, sizeof(final_command), "%s set ", get_gsmenu_backend());
     strcat(final_command,user_data->menu_page_data->type);
     strcat(final_command," ");
     strcat(final_command,user_data->menu_page_data->page);

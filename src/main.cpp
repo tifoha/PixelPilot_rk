@@ -65,6 +65,7 @@ extern "C" {
 #include "gsmenu/gs_system.h"
 #include "gsmenu/air_actions.h"
 #include "gsmenu/gs_actions.h"
+#include "gsmenu/executor.h"
 #include "menu.h"
 
 
@@ -1154,6 +1155,10 @@ void printHelp() {
     "\n"
     "    --wfb-api-host         - Host or IP of wfb-server for cli statistics. (Default: 127.0.0.1)\n"
     "\n"
+    "    --gsmenu-backend <script> - Backend script for GSMenu get/set/button commands.\n"
+    "                             Overrides GSMENU_BACKEND env var and gsmenu.script in yaml.\n"
+    "                             (Default: gsmenu.sh)\n"
+    "\n"
     "    --version              - Show program version\n"
     "\n", APP_VERSION_MAJOR, APP_VERSION_MINOR
   );
@@ -1410,6 +1415,11 @@ int main(int argc, char **argv)
 		continue;
 	}
 
+	__OnArgument("--gsmenu-backend") {
+		set_gsmenu_backend(__ArgValue);
+		continue;
+	}
+
 	__OnArgument("--version") {
 		printf("PixelPilot Rockchip %d.%d\n", APP_VERSION_MAJOR, APP_VERSION_MINOR);
 		return 0;
@@ -1475,6 +1485,9 @@ int main(int argc, char **argv)
 		if (config["gsmenu"]) {
             if (config["gsmenu"]["enabled"]) {
                 gsmenu_enabled = config["gsmenu"]["enabled"].as<bool>();
+            }
+            if (config["gsmenu"]["script"]) {
+                set_gsmenu_backend(config["gsmenu"]["script"].as<std::string>().c_str());
             }
 		if (gsmenu_enabled && config["gsmenu"]["actions"]) {
 			if (config["gsmenu"]["actions"]["air"]) {

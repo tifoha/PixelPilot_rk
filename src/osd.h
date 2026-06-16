@@ -4,6 +4,12 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <sys/types.h>
+/* macOS doesn't define uint/ulong in sys/types.h */
+#if defined(__APPLE__)
+typedef unsigned int uint;
+typedef unsigned long ulong;
+#endif
 #ifndef USE_SIMULATOR
 #include "drm.h"
 #endif

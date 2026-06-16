@@ -5,4 +5,4 @@ do
 done
 cmake -DUSE_SIMULATOR=ON -S . -B build_sim 
 cmake --build build_sim
-sudo sudo "PATH=$(pwd):$PATH" ./build_sim/pixelpilot
+PATH="$(pwd):$PATH" ./build_sim/pixelpilot

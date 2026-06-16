@@ -362,7 +362,8 @@ void generic_button_callback(lv_event_t * e) {
     lv_obj_t * button = lv_obj_get_child_by_type(target,0,&lv_button_class);
     lv_obj_t * button_label = lv_obj_get_child_by_type(target,0,&lv_label_class);
     menu_page_data_t* menu_page_data = (menu_page_data_t*) lv_event_get_user_data(e);
-    char final_command[200] = "gsmenu.sh button ";
+    char final_command[200];
+    snprintf(final_command, sizeof(final_command), "%s button ", get_gsmenu_backend());
     strcat(final_command,menu_page_data->type);
     strcat(final_command," ");
     strcat(final_command,menu_page_data->page);
@@ -695,7 +696,8 @@ void handle_sub_page_load(lv_event_t *e) {
 
 char* get_paramater(lv_obj_t * page, char * param) {
     menu_page_data_t* menu_page_data = (menu_page_data_t*) lv_obj_get_user_data(page);
-    char final_command[200] = "gsmenu.sh get ";
+    char final_command[200];
+    snprintf(final_command, sizeof(final_command), "%s get ", get_gsmenu_backend());
     strcat(final_command,menu_page_data->type);
     strcat(final_command," ");
     strcat(final_command,menu_page_data->page);

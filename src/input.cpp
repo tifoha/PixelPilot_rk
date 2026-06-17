@@ -10,6 +10,7 @@
 #include <time.h>
 #include <yaml-cpp/yaml.h>
 #include <glob.h>
+#include <linux/input.h>
 #include "main.h"
 #include "lvgl/lvgl.h"
 #include "input.h"
@@ -200,6 +201,63 @@ void setup_gpio(YAML::Node& config) {
             gpio_buttons[i].chip = NULL;
             gpio_buttons[i].line = NULL;
         }
+    }
+}
+
+// evdev keyboard support
+static int evdev_fd = -1;
+
+static void init_evdev_keyboard() {
+    // Try to find a keyboard in /dev/input/by-id first
+    glob_t gl;
+    if (glob("/dev/input/by-id/*-event-kbd", 0, NULL, &gl) == 0 && gl.gl_pathc > 0) {
+        evdev_fd = open(gl.gl_pathv[0], O_RDONLY | O_NONBLOCK);
+        if (evdev_fd >= 0)
+            fprintf(stdout, "evdev keyboard: %s\n", gl.gl_pathv[0]);
+    }
+    globfree(&gl);
+    // Fallback: scan /dev/input/event* for a device with KEY_W
+    if (evdev_fd < 0) {
+        for (int i = 0; i < 32; i++) {
+            char path[32];
+            snprintf(path, sizeof(path), "/dev/input/event%d", i);
+            int fd = open(path, O_RDONLY | O_NONBLOCK);
+            if (fd < 0) continue;
+            uint8_t evbits[EV_MAX/8+1] = {0};
+            uint8_t keybits[KEY_MAX/8+1] = {0};
+            ioctl(fd, EVIOCGBIT(0, sizeof(evbits)), evbits);
+            if (evbits[EV_KEY/8] & (1 << (EV_KEY%8))) {
+                ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(keybits)), keybits);
+                if (keybits[KEY_W/8] & (1 << (KEY_W%8))) {
+                    evdev_fd = fd;
+                    fprintf(stdout, "evdev keyboard fallback: %s\n", path);
+                    break;
+                }
+            }
+            close(fd);
+        }
+    }
+    if (evdev_fd < 0)
+        fprintf(stderr, "evdev keyboard: no keyboard found, falling back to stdin\n");
+}
+
+static void handle_evdev_input() {
+    if (evdev_fd < 0) return;
+    struct input_event ev;
+    while (read(evdev_fd, &ev, sizeof(ev)) == sizeof(ev)) {
+        if (ev.type != EV_KEY || ev.value != 1) continue; // only key-down
+        char c = '\0';
+        switch (ev.code) {
+            case KEY_W: case KEY_UP:    c = 'w'; break;
+            case KEY_S: case KEY_DOWN:  c = 's'; break;
+            case KEY_A: case KEY_LEFT:  c = 'a'; break;
+            case KEY_D: case KEY_RIGHT: c = 'd'; break;
+            case KEY_ENTER:             c = '\n'; break;
+            case KEY_Q:                 c = 'q'; break;
+            case KEY_T:                 c = 't'; break;
+            default: break;
+        }
+        if (c) handle_char_input(c);
     }
 }
 
@@ -437,6 +495,12 @@ void toggle_screen(void) {
 void handle_keyboard_input(void) {
     char c;
     if (read(STDIN_FILENO, &c, 1) > 0) {
+        handle_char_input(c);
+    }
+    handle_evdev_input();
+}
+
+static void handle_char_input(char c) {
         switch(c) {
             case 'w':
             case 'W':
@@ -583,7 +647,8 @@ static void virtual_keyboard_read(lv_indev_t * indev, lv_indev_data_t * data) {
 lv_indev_t * create_virtual_keyboard() {
 
     set_stdin_nonblock(); // setup keyboard input from stdin
-#ifndef USE_SIMULATOR 
+#ifndef USE_SIMULATOR
+    init_evdev_keyboard();       // Initialize evdev keyboard
     setup_gpio(config);          // Initialize GPIO
 #endif
     lv_indev_t * indev_drv = lv_indev_create();

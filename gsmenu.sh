@@ -664,7 +664,7 @@ case "$@" in
     "get gs system resolution")
         drm_info -j /dev/dri/card0 2>/dev/null | jq -r '."/dev/dri/card0".crtcs[0].mode| .name + "@" + (.vrefresh|tostring)'
         printf '\x1e'
-        drm_info -j /dev/dri/card0 2>/dev/null | jq -r '."/dev/dri/card0".connectors[1].modes[] | select(.name | contains("i") | not) | .name + "@" + (.vrefresh|tostring)' | sort -t'x' -k1,1n -k2,2n | awk -F'[@x]' '!seen[$1,$2,$3]++' | sed -z '$ s/\n$//'
+        drm_info -j /dev/dri/card0 2>/dev/null | jq -r '."/dev/dri/card0".connectors[1].modes[] | select(.name | contains("i") | not) | .name + "@" + (.vrefresh|tostring)' | awk -F'[@x]' '!seen[$1,$2,$3]++ {print $1+0, $2+0, $3+0, $0}' | sort -k1,1rn -k2,2rn -k3,3rn | awk '{print $4}' | sed -z '$ s/\n$//'
         ;;
     "get gs system video_scale")
         grep "^video_scale =" /config/setup.txt | cut -d '=' -f2 | xargs

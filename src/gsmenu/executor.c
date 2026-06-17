@@ -57,8 +57,15 @@ void error_button_callback(lv_event_t * e) {
     msgbox_label = NULL;
     msgbox = NULL;
     buffer[0] = '\0';
-    lv_group_set_default(main_group);
-    lv_indev_set_group(indev_drv, main_group);
+    lv_obj_t * current_page = lv_menu_get_cur_main_page(menu);
+    menu_page_data_t* menu_page_data = lv_obj_get_user_data(current_page);
+    if (menu_page_data && menu_page_data->indev_group) {
+        lv_group_set_default(menu_page_data->indev_group);
+        lv_indev_set_group(indev_drv, menu_page_data->indev_group);
+    } else {
+        lv_group_set_default(main_group);
+        lv_indev_set_group(indev_drv, main_group);
+    }
 }
 
 
@@ -93,6 +100,7 @@ void show_error(CommandResult result) {
         lv_obj_add_style(button, &style_openipc, LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_add_style(button, &style_openipc_outline, LV_PART_MAIN | LV_STATE_FOCUS_KEY);
         lv_group_add_obj(error_group, button);
+        lv_group_focus_obj(button);
         msgbox_label = lv_msgbox_add_text(msgbox,"");
         // lv_label_set_long_mode(msgbox_label, LV_LABEL_LONG_MODE_SCROLL);
     };

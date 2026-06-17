@@ -77,8 +77,7 @@ void loader_cancel_button_cb(lv_event_t * e) {
         lv_indev_set_group(indev_drv, menu_page_data->indev_group);
     } else {
         // Find the first focusable object recursively
-        lv_obj_t * first_obj = find_first_focusable_obj(msgbox);
-        lv_group_focus_obj(first_obj);
+        lv_group_focus_next(error_group);
         lv_indev_set_group(indev_drv, error_group);
     }
 

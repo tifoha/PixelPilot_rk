@@ -204,6 +204,8 @@ void setup_gpio(YAML::Node& config) {
     }
 }
 
+static void handle_char_input(char c); // forward declaration
+
 // evdev keyboard support
 static int evdev_fd = -1;
 

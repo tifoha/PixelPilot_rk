@@ -12,15 +12,13 @@ option(USE_SIMULATOR "Build the simulator version of the application" OFF)
 option(BUILD_TESTS "Build unit tests" OFF)
 
 # LVGL setup
-if(NOT USE_SIMULATOR)
-  set(LV_USE_LINUX_DRM ON)
-endif()
+set(LV_USE_LINUX_DRM ON)
 set(LV_CONF_BUILD_DISABLE_DEMOS 1)
 set(LV_CONF_BUILD_DISABLE_EXAMPLES 1)
 add_subdirectory(lvgl)
 
 # Set include directories for LVGL BEFORE any other targets
-target_include_directories(lvgl PUBLIC
+target_include_directories(lvgl PUBLIC 
     ${PROJECT_SOURCE_DIR}
     ${PROJECT_SOURCE_DIR}/lvgl
 )
@@ -28,15 +26,13 @@ set(CMAKE_C_STANDARD 99) # LVGL officially supports C99 and above
 set(CMAKE_CXX_STANDARD 17) #C17
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(PNG REQUIRED)
+pkg_check_modules(LIBDRM REQUIRED libdrm)
+pkg_check_modules(CAIRO IMPORTED_TARGET REQUIRED cairo)
+pkg_check_modules(SPDLOG REQUIRED spdlog)
 
-if(NOT USE_SIMULATOR)
-  pkg_check_modules(LIBDRM REQUIRED libdrm)
-  pkg_check_modules(CAIRO IMPORTED_TARGET REQUIRED cairo)
-  pkg_check_modules(SPDLOG REQUIRED spdlog)
-  find_package(fmt REQUIRED)
-  find_package(spdlog REQUIRED)
-endif()
+find_package(PNG REQUIRED)
+find_package(fmt REQUIRED)
+find_package(spdlog REQUIRED)
 
 include_directories(${PNG_INCLUDE_DIR})
 
@@ -181,11 +177,8 @@ if(USE_SIMULATOR)
   add_definitions(-DUSE_SIMULATOR)
   target_compile_definitions(lvgl PRIVATE USE_SIMULATOR)
   pkg_check_modules(LIBSDL REQUIRED sdl2)
-  target_include_directories(lvgl PUBLIC ${LIBSDL_INCLUDE_DIRS})
   add_executable(${PROJECT_NAME} ${SIMULATOR_SOURCES})
-  target_include_directories(${PROJECT_NAME} PRIVATE ${LIBSDL_INCLUDE_DIRS})
-  target_link_directories(${PROJECT_NAME} PRIVATE ${LIBSDL_LIBRARY_DIRS})
-  target_link_libraries(${PROJECT_NAME} lvgl ${LIBSDL_LIBRARIES} ${PNG_LIBRARIES})
+  target_link_libraries(${PROJECT_NAME} lvgl ${LIBSDL_LIBRARIES} ${PNG_LIBRARIES} ${LIBDRM_LIBRARIES})
 else()
   find_package(nlohmann_json 3 REQUIRED)
   find_package(yaml-cpp REQUIRED)
@@ -244,7 +237,7 @@ if(CMAKE_BUILD_TYPE MATCHES "Debug")
   set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
   set(
     CMAKE_C_FLAGS
-    "${CMAKE_C_FLAGS} -fsanitize=undefined -fsanitize=address"
+    "${CMAKE_C_FLAGS} -Werror -fsanitize=undefined -fsanitize=address"
   )
   target_link_options(${PROJECT_NAME}
     BEFORE PUBLIC -fsanitize=undefined PUBLIC -fsanitize=address

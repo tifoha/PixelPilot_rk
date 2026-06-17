@@ -5,4 +5,4 @@ do
 done
 cmake -DUSE_SIMULATOR=ON -S . -B build_sim 
 cmake --build build_sim
-PATH="$(pwd):$PATH" GSMENU_BACKEND="$(pwd)/gsmenu_mac.sh" ./build_sim/pixelpilot
+sudo sudo "PATH=$(pwd):$PATH" ./build_sim/pixelpilot

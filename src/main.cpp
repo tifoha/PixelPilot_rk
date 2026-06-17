@@ -1441,7 +1441,7 @@ int main(int argc, char **argv)
 		sinks.push_back(console_sink);
 		if (!log_file.empty()) {
 			auto file_sink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
-				log_file, log_max_size_mb * 1024UL * 1024UL, log_max_files, true);
+				log_file, log_max_size_mb * 1024UL * 1024UL, log_max_files, false);
 			sinks.push_back(file_sink);
 		}
 		auto logger = std::make_shared<spdlog::logger>("pp", sinks.begin(), sinks.end());

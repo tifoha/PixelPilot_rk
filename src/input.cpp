@@ -612,7 +612,6 @@ static void handle_char_input(char c) {
                 raise(SIGINT);
                 break;
         }
-    }
 }
 
 // Custom function to simulate keyboard input

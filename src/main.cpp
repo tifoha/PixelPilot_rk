@@ -36,6 +36,8 @@
 #include <nlohmann/json.hpp>
 #include <yaml-cpp/yaml.h>
 #include "spdlog/spdlog.h"
+#include "spdlog/sinks/stdout_color_sinks.h"
+#include "spdlog/sinks/rotating_file_sink.h"
 
 extern "C" {
 #include "main.h"
@@ -44,6 +46,7 @@ extern "C" {
 #include "mavlink/common/mavlink.h"
 #include "mavlink.h"
 #include "input.h"
+#include "gsmenu/executor.h"
 }
 
 #include "osd.h"
@@ -1087,7 +1090,13 @@ void printHelp() {
     "\n"
     "    --codec <codec>        - Video codec, should be the same as on VTX  (Default: h265 <h264|h265>)\n"
     "\n"
-    "    --log-level <level>    - Log verbosity level, debug|info|warn|error (Default: info)\n"
+    "    --log-level <level>         - Log verbosity level, debug|info|warn|error (Default: info)\n"
+    "\n"
+    "    --log-file <path>           - Log to file in addition to console, with rotation (Default: /tmp/pixelpilot.log)\n"
+    "\n"
+    "    --log-file-max-size <MB>    - Max log file size in MB before rotation (Default: 10)\n"
+    "\n"
+    "    --log-file-max-files <N>    - Number of rotated log files to keep (Default: 3)\n"
     "\n"
     "    --osd                  - Enable OSD\n"
     "\n"
@@ -1168,6 +1177,9 @@ int main(int argc, char **argv)
 	char * config_file_path = NULL;
 	std::string osd_config_path;
 	auto log_level = spdlog::level::info;
+	std::string log_file = "";
+	int log_max_size_mb = 10;
+	int log_max_files = 3;
 	
     std::string pidFilePath = "/run/pixelpilot.pid";
     std::ofstream pidFile(pidFilePath);
@@ -1293,7 +1305,6 @@ int main(int argc, char **argv)
 			log_level = spdlog::level::info;
 		} else if (log_l == "debug"){
 			log_level = spdlog::level::debug;
-			spdlog::set_pattern("[%Y-%m-%d %H:%M:%S.%e] [thread %t] [%s:%#] [%^%l%$] %v");
 		} else if (log_l == "warn"){
 			log_level = spdlog::level::warn;
 		} else if (log_l == "error"){
@@ -1303,6 +1314,21 @@ int main(int argc, char **argv)
 			printHelp();
 			return -1;
 		}
+		continue;
+	}
+
+	__OnArgument("--log-file") {
+		log_file = std::string(__ArgValue);
+		continue;
+	}
+
+	__OnArgument("--log-file-max-size") {
+		log_max_size_mb = atoi(__ArgValue);
+		continue;
+	}
+
+	__OnArgument("--log-file-max-files") {
+		log_max_files = atoi(__ArgValue);
 		continue;
 	}
 
@@ -1409,7 +1435,23 @@ int main(int argc, char **argv)
 
 	__EndParseConsoleArguments__
 
-	spdlog::set_level(log_level);
+	{
+		std::vector<spdlog::sink_ptr> sinks;
+		auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
+		sinks.push_back(console_sink);
+		if (!log_file.empty()) {
+			auto file_sink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
+				log_file, log_max_size_mb * 1024UL * 1024UL, log_max_files, true);
+			sinks.push_back(file_sink);
+		}
+		auto logger = std::make_shared<spdlog::logger>("pp", sinks.begin(), sinks.end());
+		logger->set_level(log_level);
+		if (log_level == spdlog::level::debug)
+			logger->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [thread %t] [%s:%#] [%^%l%$] %v");
+		spdlog::set_default_logger(logger);
+		if (!log_file.empty())
+			executor_set_log_file(log_file.c_str());
+	}
 	idr_set_enabled(!disable_gregidr);
 
 	if (dvr_template != NULL && (dvr_mode == DVR_MODE_RAW || dvr_mode == DVR_MODE_BOTH) && video_framerate < 0) {

@@ -8,27 +8,10 @@
 #include "executor.h"
 #include "helper.h"
 #include "styles.h"
+#include "log.h"
 
 #define MAX_OUTPUT_SIZE 4096
 #define BUFFER_SIZE MAX_OUTPUT_SIZE * 3
-
-static char g_log_file[512] = "";
-
-void executor_set_log_file(const char* path) {
-    strncpy(g_log_file, path, sizeof(g_log_file) - 1);
-    g_log_file[sizeof(g_log_file) - 1] = '\0';
-}
-
-static void executor_log(const char* msg) {
-    printf("%s", msg);
-    if (g_log_file[0]) {
-        FILE* lf = fopen(g_log_file, "a");
-        if (lf) {
-            fprintf(lf, "%s", msg);
-            fclose(lf);
-        }
-    }
-}
 
 typedef struct {
     char* command;
@@ -141,11 +124,7 @@ char* run_command(const char* command) {
         "%s > %s 2> %s",
         command, stdout_file, stderr_file);
 
-    {
-        char log_msg[MAX_OUTPUT_SIZE];
-        snprintf(log_msg, sizeof(log_msg), "[gsmenu] cmd: %s\n", command);
-        executor_log(log_msg);
-    }
+    gsmenu_log_debug("cmd: %s", command);
 
     // Execute the command
     int status = system(full_command);
@@ -181,19 +160,11 @@ char* run_command(const char* command) {
     unlink(stdout_file);
     unlink(stderr_file);
 
-    {
-        char log_msg[MAX_OUTPUT_SIZE * 2];
-        if (result.stdout_output && result.stdout_output[0]) {
-            snprintf(log_msg, sizeof(log_msg), "[gsmenu] stdout: %s\n", result.stdout_output);
-            executor_log(log_msg);
-        }
-        if (result.stderr_output && result.stderr_output[0]) {
-            snprintf(log_msg, sizeof(log_msg), "[gsmenu] stderr: %s\n", result.stderr_output);
-            executor_log(log_msg);
-        }
-        snprintf(log_msg, sizeof(log_msg), "[gsmenu] exit: %d\n", result.exit_status);
-        executor_log(log_msg);
-    }
+    if (result.stdout_output && result.stdout_output[0])
+        gsmenu_log_debug("stdout: %s", result.stdout_output);
+    if (result.stderr_output && result.stderr_output[0])
+        gsmenu_log_debug("stderr: %s", result.stderr_output);
+    gsmenu_log_debug("exit: %d", result.exit_status);
 
     if (result.exit_status > 0) {
         show_error(result);

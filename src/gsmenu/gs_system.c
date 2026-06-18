@@ -12,6 +12,7 @@
 #include "helper.h"
 #include "executor.h"
 #include "styles.h"
+#include "log.h"
 
 extern lv_group_t * default_group;
 extern lv_obj_t * menu;
@@ -177,15 +178,13 @@ void rec_enabled_cb(lv_event_t *e) {
         if (lv_obj_has_state(ta, LV_STATE_CHECKED)) {
 #ifndef USE_SIMULATOR
             dvr_start_all();
-#else
-            printf("dvr_start_all();\n");
 #endif
+            gsmenu_log_debug("ui: rec_enabled ON -> dvr_start_all()");
         } else {
 #ifndef USE_SIMULATOR
             dvr_stop_all();
-#else
-            printf("dvr_stop_all();\n");
 #endif
+            gsmenu_log_debug("ui: rec_enabled OFF -> dvr_stop_all()");
         }
     }
 }
@@ -205,7 +204,7 @@ void gs_live_colortrans_cb(lv_event_t *e) {
 #ifndef USE_SIMULATOR
             dvr_reenc_notify_colortrans(1);
 #endif
-            printf("Live colortrans ENABLED (offset=%f, gain=%f)\n",
+            gsmenu_log_debug("ui: Live colortrans ENABLED (offset=%f, gain=%f)",
                          live_colortrans_offset, live_colortrans_gain);
         } else {
 #ifndef USE_SIMULATOR
@@ -216,7 +215,7 @@ void gs_live_colortrans_cb(lv_event_t *e) {
 #ifndef USE_SIMULATOR
             dvr_reenc_notify_colortrans(0);
 #endif
-            printf("Live colortrans DISABLED\n");
+            gsmenu_log_debug("ui: Live colortrans DISABLED");
         }
     }
 }
@@ -246,9 +245,8 @@ void dvr_reenc_fps_cb(lv_event_t *e) {
         if (fps > 0) {
 #ifndef USE_SIMULATOR
             dvr_reenc_set_fps(fps);
-#else
-            printf("dvr_reenc_set_fps(%d);\n", fps);
 #endif
+            gsmenu_log_debug("ui: dvr_reenc_fps -> dvr_reenc_set_fps(%d)", fps);
         }
     }
 }
@@ -260,9 +258,8 @@ void dvr_reenc_osd_cb(lv_event_t *e) {
         int osd_on = lv_obj_has_state(ta, LV_STATE_CHECKED) ? 1 : 0;
 #ifndef USE_SIMULATOR
         dvr_reenc_set_osd(osd_on);
-#else
-        printf("dvr_reenc_set_osd(%d);\n", osd_on);
 #endif
+        gsmenu_log_debug("ui: dvr_osd -> dvr_reenc_set_osd(%d)", osd_on);
     }
 }
 
@@ -276,9 +273,8 @@ void dvr_reenc_bitrate_cb(lv_event_t *e) {
         if (kbps > 0) {
 #ifndef USE_SIMULATOR
             dvr_reenc_set_bitrate(kbps);
-#else
-            printf("dvr_reenc_set_bitrate(%d);\n", kbps);
 #endif
+            gsmenu_log_debug("ui: dvr_reenc_bitrate -> dvr_reenc_set_bitrate(%d)", kbps);
         }
     }
 }
@@ -290,9 +286,8 @@ void dvr_reenc_codec_cb(lv_event_t *e) {
         int idx = lv_dropdown_get_selected(ta); // 0=h264, 1=h265
 #ifndef USE_SIMULATOR
         dvr_reenc_set_codec(idx);
-#else
-        printf("dvr_reenc_set_codec(%d);\n", idx);
 #endif
+        gsmenu_log_debug("ui: dvr_reenc_codec -> dvr_reenc_set_codec(%d)", idx);
     }
 }
 
@@ -303,9 +298,8 @@ void dvr_reenc_resolution_cb(lv_event_t *e) {
         int idx = lv_dropdown_get_selected(ta); // 0=720p, 1=1080p
 #ifndef USE_SIMULATOR
         dvr_reenc_set_resolution(idx);
-#else
-        printf("dvr_reenc_set_resolution(%d);\n", idx);
 #endif
+        gsmenu_log_debug("ui: dvr_reenc_resolution -> dvr_reenc_set_resolution(%d)", idx);
     }
 }
 
@@ -363,9 +357,8 @@ void dvr_max_size_cb(lv_event_t *e) {
     int mb = lv_slider_get_value(slider) * 100;
 #ifndef USE_SIMULATOR
     dvr_set_max_size(mb);
-#else
-    printf("dvr_set_max_size(%d);\n", mb);
 #endif
+    gsmenu_log_debug("ui: dvr_max_size -> dvr_set_max_size(%d)", mb);
 }
 
 void dvr_mode_cb(lv_event_t *e) {
@@ -375,9 +368,8 @@ void dvr_mode_cb(lv_event_t *e) {
         int mode = lv_dropdown_get_selected(ta); // 0=raw, 1=reencode, 2=both
 #ifndef USE_SIMULATOR
         dvr_set_mode(mode);
-#else
-        printf("dvr_set_mode(%d);\n", mode);
 #endif
+        gsmenu_log_debug("ui: dvr_mode -> dvr_set_mode(%d)", mode);
         update_dvr_mode_visibility();
     }
 }
@@ -487,6 +479,10 @@ void create_gs_system_display_menu(lv_obj_t * parent) {
     use_sub_back_handler(video_scale);
     gs_live_colortrans = create_switch(cont, LV_SYMBOL_SETTINGS, "Live Colortrans", "gs_live_colortrans", menu_page_data, false);
     lv_obj_add_event_cb(lv_obj_get_child_by_type(gs_live_colortrans, 0, &lv_switch_class), gs_live_colortrans_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    // gs_live_colortrans_cb already does the full job in-process (DRM gamma LUT); drop the
+    // generic gsmenu.sh shell-out so an unhandled "set gs system gs_live_colortrans" command
+    // can't pop an error dialog and steal keyboard focus from the menu.
+    lv_obj_remove_event_cb(lv_obj_get_child_by_type(gs_live_colortrans, 0, &lv_switch_class), generic_switch_event_cb);
     use_sub_back_handler(gs_live_colortrans);
 
     add_entry_to_menu_page(menu_page_data, "Loading GS Rendering ...", gs_rendering,       reload_switch_value);
@@ -520,15 +516,24 @@ void create_gs_system_dvr_menu(lv_obj_t * parent) {
 
     rec_enabled = create_switch(cont, LV_SYMBOL_SETTINGS, "Enabled", "rec_enabled", menu_page_data, true);
     lv_obj_add_event_cb(lv_obj_get_child_by_type(rec_enabled, 0, &lv_switch_class), rec_enabled_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    // rec_enabled_cb already starts/stops DVR in-process; drop the generic gsmenu.sh
+    // shell-out, which only ever ran a no-op.
+    lv_obj_remove_event_cb(lv_obj_get_child_by_type(rec_enabled, 0, &lv_switch_class), generic_switch_event_cb);
     use_sub_back_handler(rec_enabled);
 
     dvr_mode_dd = create_dropdown(cont, LV_SYMBOL_SETTINGS, "Mode", "", "dvr_mode", menu_page_data, false);
     lv_obj_add_event_cb(lv_obj_get_child_by_type(dvr_mode_dd, 0, &lv_dropdown_class), dvr_mode_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    // dvr_mode_cb already does the full job in-process; drop the generic gsmenu.sh
+    // shell-out, which only ever ran a no-op.
+    lv_obj_remove_event_cb(lv_obj_get_child_by_type(dvr_mode_dd, 0, &lv_dropdown_class), generic_dropdown_event_cb);
     use_sub_back_handler(dvr_mode_dd);
 
     dvr_max_size = create_slider(cont, LV_SYMBOL_SETTINGS, "Max file size (MB)", "dvr_max_size", menu_page_data, false, 0);
     lv_obj_add_event_cb(lv_obj_get_child_by_type(dvr_max_size, 0, &lv_slider_class), dvr_max_size_label_cb, LV_EVENT_VALUE_CHANGED, NULL);
     lv_obj_add_event_cb(lv_obj_get_child_by_type(dvr_max_size, 0, &lv_slider_class), dvr_max_size_cb, LV_EVENT_CLICKED, NULL);
+    // dvr_max_size_cb already does the full job in-process; drop the generic gsmenu.sh
+    // shell-out, which only ever ran a no-op.
+    lv_obj_remove_event_cb(lv_obj_get_child_by_type(dvr_max_size, 0, &lv_slider_class), generic_slider_event_cb);
     use_sub_back_handler(dvr_max_size);
 
     rec_fps = create_dropdown(cont, LV_SYMBOL_SETTINGS, "Raw FPS", "", "rec_fps", menu_page_data, false);
@@ -537,18 +542,33 @@ void create_gs_system_dvr_menu(lv_obj_t * parent) {
 
     dvr_reenc_codec = create_dropdown(cont, LV_SYMBOL_SETTINGS, "Codec", "", "dvr_reenc_codec", menu_page_data, false);
     lv_obj_add_event_cb(lv_obj_get_child_by_type(dvr_reenc_codec, 0, &lv_dropdown_class), dvr_reenc_codec_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    // dvr_reenc_codec_cb already does the full job in-process; drop the generic gsmenu.sh
+    // shell-out, which only ever ran a no-op.
+    lv_obj_remove_event_cb(lv_obj_get_child_by_type(dvr_reenc_codec, 0, &lv_dropdown_class), generic_dropdown_event_cb);
     use_sub_back_handler(dvr_reenc_codec);
     dvr_reenc_resolution = create_dropdown(cont, LV_SYMBOL_SETTINGS, "Resolution", "", "dvr_reenc_resolution", menu_page_data, false);
     lv_obj_add_event_cb(lv_obj_get_child_by_type(dvr_reenc_resolution, 0, &lv_dropdown_class), dvr_reenc_resolution_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    // dvr_reenc_resolution_cb already does the full job in-process; drop the generic
+    // gsmenu.sh shell-out, which only ever ran a no-op.
+    lv_obj_remove_event_cb(lv_obj_get_child_by_type(dvr_reenc_resolution, 0, &lv_dropdown_class), generic_dropdown_event_cb);
     use_sub_back_handler(dvr_reenc_resolution);
     dvr_reenc_fps = create_dropdown(cont, LV_SYMBOL_SETTINGS, "Re-encode FPS", "", "dvr_reenc_fps", menu_page_data, false);
     lv_obj_add_event_cb(lv_obj_get_child_by_type(dvr_reenc_fps, 0, &lv_dropdown_class), dvr_reenc_fps_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    // dvr_reenc_fps_cb already does the full job in-process; drop the generic gsmenu.sh
+    // shell-out, which only ever ran a no-op.
+    lv_obj_remove_event_cb(lv_obj_get_child_by_type(dvr_reenc_fps, 0, &lv_dropdown_class), generic_dropdown_event_cb);
     use_sub_back_handler(dvr_reenc_fps);
     dvr_reenc_bitrate = create_dropdown(cont, LV_SYMBOL_SETTINGS, "Bitrate (kbps)", "", "dvr_reenc_bitrate", menu_page_data, false);
     lv_obj_add_event_cb(lv_obj_get_child_by_type(dvr_reenc_bitrate, 0, &lv_dropdown_class), dvr_reenc_bitrate_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    // dvr_reenc_bitrate_cb already does the full job in-process; drop the generic
+    // gsmenu.sh shell-out, which only ever ran a no-op.
+    lv_obj_remove_event_cb(lv_obj_get_child_by_type(dvr_reenc_bitrate, 0, &lv_dropdown_class), generic_dropdown_event_cb);
     use_sub_back_handler(dvr_reenc_bitrate);
     dvr_reenc_osd = create_switch(cont, LV_SYMBOL_SETTINGS, "Record OSD in DVR", "dvr_osd", menu_page_data, false);
     lv_obj_add_event_cb(lv_obj_get_child_by_type(dvr_reenc_osd, 0, &lv_switch_class), dvr_reenc_osd_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    // dvr_reenc_osd_cb already does the full job in-process; drop the generic gsmenu.sh
+    // shell-out, which only ever ran a no-op (and pointlessly spun up a background thread).
+    lv_obj_remove_event_cb(lv_obj_get_child_by_type(dvr_reenc_osd, 0, &lv_switch_class), generic_switch_event_cb);
     use_sub_back_handler(dvr_reenc_osd);
 
     // dvr_mode_fn must be last: it calls update_dvr_mode_visibility() after all

@@ -16,6 +16,7 @@
 #include <inttypes.h>
 #include <signal.h>
 #include <fstream>
+#include <filesystem>
 #include <atomic>
 #include <queue>
 #include <mutex>
@@ -46,7 +47,6 @@ extern "C" {
 #include "mavlink/common/mavlink.h"
 #include "mavlink.h"
 #include "input.h"
-#include "gsmenu/executor.h"
 }
 
 #include "osd.h"
@@ -1092,7 +1092,7 @@ void printHelp() {
     "\n"
     "    --log-level <level>         - Log verbosity level, debug|info|warn|error (Default: info)\n"
     "\n"
-    "    --log-file <path>           - Log to file in addition to console, with rotation (Default: /tmp/pixelpilot.log)\n"
+    "    --log-to-file [path]         - Also log to file, with rotation (Default if no path given: /var/log/pixelpilot/pixelpilot.log)\n"
     "\n"
     "    --log-file-max-size <MB>    - Max log file size in MB before rotation (Default: 10)\n"
     "\n"
@@ -1177,6 +1177,7 @@ int main(int argc, char **argv)
 	char * config_file_path = NULL;
 	std::string osd_config_path;
 	auto log_level = spdlog::level::info;
+	const std::string default_log_file = "/var/log/pixelpilot/pixelpilot.log";
 	std::string log_file = "";
 	int log_max_size_mb = 10;
 	int log_max_files = 3;
@@ -1317,8 +1318,13 @@ int main(int argc, char **argv)
 		continue;
 	}
 
-	__OnArgument("--log-file") {
-		log_file = std::string(__ArgValue);
+	__OnArgument("--log-to-file") {
+		// Optional path argument: only consume the next token if it doesn't
+		// look like another flag, so "--log-to-file --osd" still works.
+		if (ArgID + 1 < argc && argv[ArgID + 1][0] != '-')
+			log_file = argv[++ArgID];
+		else
+			log_file = default_log_file;
 		continue;
 	}
 
@@ -1440,17 +1446,22 @@ int main(int argc, char **argv)
 		auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
 		sinks.push_back(console_sink);
 		if (!log_file.empty()) {
-			auto file_sink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
-				log_file, log_max_size_mb * 1024UL * 1024UL, log_max_files, false);
-			sinks.push_back(file_sink);
+			try {
+				std::filesystem::create_directories(std::filesystem::path(log_file).parent_path());
+				auto file_sink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
+					log_file, log_max_size_mb * 1024UL * 1024UL, log_max_files, false);
+				sinks.push_back(file_sink);
+			} catch (const std::exception& e) {
+				fprintf(stderr, "Could not open log file '%s': %s (continuing with console logging only)\n",
+					log_file.c_str(), e.what());
+			}
 		}
 		auto logger = std::make_shared<spdlog::logger>("pp", sinks.begin(), sinks.end());
 		logger->set_level(log_level);
 		if (log_level == spdlog::level::debug)
 			logger->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [thread %t] [%s:%#] [%^%l%$] %v");
 		spdlog::set_default_logger(logger);
-		if (!log_file.empty())
-			executor_set_log_file(log_file.c_str());
+		logger->flush_on(spdlog::level::trace);
 	}
 	idr_set_enabled(!disable_gregidr);
 

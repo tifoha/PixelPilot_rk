@@ -1,5 +1,9 @@
 #!/bin/bash
 set -o pipefail
+# Uncomment the next two lines to trace every command this script executes
+# (with file:line) into /tmp/pp.log's "[gsmenu] stderr: ..." lines.
+# export PS4='+ ${BASH_SOURCE}:${LINENO}: '
+# set -x
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Configuration
@@ -757,59 +761,30 @@ case "$@" in
     "set gs system rec_fps"*)
         sed -i "s/^rec_fps =.*/rec_fps = $5/" /config/setup.txt
         ;;
-    "set gs system rec_enabled"*)
-        if [ "$5" = "off" ]; then
-            : #noop
-        else
-            : #noop
-        fi
-        ;;
     "get gs system dvr_mode"*)
         echo "raw"
         emit_values "raw\nreencode\nboth"
-        ;;
-    "set gs system dvr_mode"*)
-        : # noop
         ;;
     "get gs system dvr_max_size"*)
         echo -n "40" # will be multiplied by 100
         emit_values "1 40"
         ;;
-    "set gs system dvr_max_size"*)
-        : # noop needs division by 100
-        ;;
     "get gs system dvr_reenc_codec"*)
         echo -n "h264"
         emit_values "h264\nh265"
-        ;;
-    "set gs system dvr_reenc_codec"*)
-        : # noop
         ;;
     "get gs system dvr_reenc_resolution"*)
         echo -n "1080p"
         emit_values "720p\n1080p"
         ;;
-    "set gs system dvr_reenc_resolution"*)
-        : # noop
-        ;;
     "get gs system dvr_reenc_fps"*)
         echo -n "60"
         emit_values "30\n60"
-        ;;
-    "set gs system dvr_reenc_fps"*)
-        : # noop
         ;;
     "get gs system dvr_reenc_bitrate"*)
         echo -n "10000"
         emit_values "5000\n10000\n15000\n20000\n25000\n30000\n35000\n40000\n45000\n50000"
         ;;
-    "set gs system dvr_reenc_bitrate"*)
-        : # noop
-        ;;
-    "set gs system dvr_osd"*)
-        : # noop
-        ;;
-
 # ── GS: APFPV ───────────────────────────────────────────────────────────────
 
     "get gs apfpv ssid")

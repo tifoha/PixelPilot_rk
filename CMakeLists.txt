@@ -41,6 +41,8 @@ set(SIMULATOR_SOURCES
         src/simulator.c
         src/gsmenu/executor.h
         src/gsmenu/executor.c
+        src/gsmenu/log.h
+        src/gsmenu/log.cpp
         src/gsmenu/air_telemetry.h
         src/gsmenu/air_telemetry.c
         src/gsmenu/air_txprofiles.h
@@ -96,6 +98,8 @@ set(LIB_SOURCE_FILES
         src/drm.c
         src/gsmenu/executor.h
         src/gsmenu/executor.c
+        src/gsmenu/log.h
+        src/gsmenu/log.cpp
         src/gsmenu/air_telemetry.c
         src/gsmenu/air_txprofiles.h
         src/gsmenu/air_txprofiles.c
@@ -178,7 +182,7 @@ if(USE_SIMULATOR)
   target_compile_definitions(lvgl PRIVATE USE_SIMULATOR)
   pkg_check_modules(LIBSDL REQUIRED sdl2)
   add_executable(${PROJECT_NAME} ${SIMULATOR_SOURCES})
-  target_link_libraries(${PROJECT_NAME} lvgl ${LIBSDL_LIBRARIES} ${PNG_LIBRARIES} ${LIBDRM_LIBRARIES})
+  target_link_libraries(${PROJECT_NAME} lvgl ${LIBSDL_LIBRARIES} ${PNG_LIBRARIES} ${LIBDRM_LIBRARIES} spdlog::spdlog fmt::fmt)
 else()
   find_package(nlohmann_json 3 REQUIRED)
   find_package(yaml-cpp REQUIRED)

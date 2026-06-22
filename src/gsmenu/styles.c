@@ -1,5 +1,6 @@
 #include "lvgl/lvgl.h"
 
+extern int gsmenu_transparency; // 0-255, from pixelpilot.yaml gsmenu.transparency; see osd.cpp
 
 lv_style_t style_rootmenu;
 lv_style_t style_openipc;
@@ -16,6 +17,7 @@ int style_init(void) {
     lv_style_reset(&style_rootmenu);
     lv_style_init(&style_rootmenu);
     lv_style_set_bg_color(&style_rootmenu, lv_color_darken( lv_color_make(0xcd, 0xcd, 0xcd), 50));
+    lv_style_set_bg_opa(&style_rootmenu, gsmenu_transparency);
     lv_style_set_pad_top(&style_rootmenu, 0);
     lv_style_set_pad_bottom(&style_rootmenu, 0);
     lv_style_set_pad_left(&style_rootmenu, 0);
@@ -62,4 +64,8 @@ int style_init(void) {
     //lv_style_set_border_color(&style_openipc_disabled, lv_color_hex(0xffe61212));
 
     return 0;
+}
+
+void apply_menu_transparency(lv_obj_t *page) {
+    lv_obj_set_style_bg_opa(page, gsmenu_transparency, LV_PART_MAIN);
 }

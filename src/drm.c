@@ -765,6 +765,26 @@ int modeset_atomic_prepare_commit(int fd, struct modeset_output *out, drmModeAto
 	if (set_drm_object_property(req, plane, "zpos", zpos) < 0)
 		return -1;
 
+	// OSD plane only: LVGL (my_flush_cb) and Cairo (modeset_paint_buffer)
+	// both write straight (non-premultiplied) alpha into the ARGB8888
+	// buffer -- see the comment at the top of osd_gl.cpp. This driver's
+	// "pixel blend mode" plane property defaults to Pre-multiplied (0),
+	// which expects color channels already scaled by alpha; without this
+	// line, opacity has no visible effect at all regardless of value
+	// (confirmed empirically by reverting it). Coverage (1) is DRM's term
+	// for straight-alpha blending, matching what's actually in the buffer.
+	// Video plane is unaffected (always fully opaque, no alpha channel
+	// use), so this is scoped to the OSD plane specifically rather than
+	// applied generically here.
+	//
+	// Note: with this enabled, the visible opacity effect is inverted
+	// (0=opaque, 255=transparent) from LVGL's normal bg_opa convention --
+	// compensated for at the source, see gsmenu_transparency in main.cpp.
+	if (plane == &out->osd_plane) {
+		if (set_drm_object_property(req, plane, "pixel blend mode", 1) < 0)
+			return -1;
+	}
+
 	return 0;
 }
 

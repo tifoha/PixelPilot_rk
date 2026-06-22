@@ -309,112 +309,134 @@ lv_obj_t * pp_menu_create(lv_obj_t * screen)
 
     /*Create sub pages*/
     sub_gs_main_page = lv_menu_page_create(menu, NULL);
+    apply_menu_transparency(sub_gs_main_page);
     lv_obj_set_style_pad_hor(sub_gs_main_page, lv_obj_get_style_pad_left(lv_menu_get_main_header(menu), 0), 0);
     lv_menu_separator_create(sub_gs_main_page);
     create_main_menu(sub_gs_main_page);
 
     sub_air_wfbng_page = lv_menu_page_create(menu, LV_SYMBOL_WIFI" WFB-NG");
+    apply_menu_transparency(sub_air_wfbng_page);
     lv_obj_set_style_pad_hor(sub_air_wfbng_page, lv_obj_get_style_pad_left(lv_menu_get_main_header(menu), 0), 0);
     lv_menu_separator_create(sub_air_wfbng_page);
     create_air_wfbng_menu(sub_air_wfbng_page);
 
     sub_air_alink_page = lv_menu_page_create(menu, LV_SYMBOL_WIFI" ALink");
+    apply_menu_transparency(sub_air_alink_page);
     lv_obj_set_style_pad_hor(sub_air_alink_page, lv_obj_get_style_pad_left(lv_menu_get_main_header(menu), 0), 0);
     lv_menu_separator_create(sub_air_alink_page);
     create_air_alink_menu(sub_air_alink_page);
 
     sub_air_aalink_page = lv_menu_page_create(menu, LV_SYMBOL_WIFI" AALink");
+    apply_menu_transparency(sub_air_aalink_page);
     lv_obj_set_style_pad_hor(sub_air_aalink_page, lv_obj_get_style_pad_left(lv_menu_get_main_header(menu), 0), 0);
     lv_menu_separator_create(sub_air_aalink_page);
     create_air_aalink_menu(sub_air_aalink_page);
 
     sub_air_camera_video_page = lv_menu_page_create(menu, LV_SYMBOL_IMAGE" Video");
+    apply_menu_transparency(sub_air_camera_video_page);
     lv_obj_set_style_pad_hor(sub_air_camera_video_page, lv_obj_get_style_pad_left(lv_menu_get_main_header(menu), 0), 0);
     lv_menu_separator_create(sub_air_camera_video_page);
     create_air_camera_video_menu(sub_air_camera_video_page);
 
     sub_air_camera_image_page = lv_menu_page_create(menu, LV_SYMBOL_IMAGE" Image");
+    apply_menu_transparency(sub_air_camera_image_page);
     lv_obj_set_style_pad_hor(sub_air_camera_image_page, lv_obj_get_style_pad_left(lv_menu_get_main_header(menu), 0), 0);
     lv_menu_separator_create(sub_air_camera_image_page);
     create_air_camera_image_menu(sub_air_camera_image_page);
 
     sub_air_camera_recording_page = lv_menu_page_create(menu, LV_SYMBOL_VIDEO" Recording");
+    apply_menu_transparency(sub_air_camera_recording_page);
     lv_obj_set_style_pad_hor(sub_air_camera_recording_page, lv_obj_get_style_pad_left(lv_menu_get_main_header(menu), 0), 0);
     lv_menu_separator_create(sub_air_camera_recording_page);
     create_air_camera_recording_menu(sub_air_camera_recording_page);
 
     sub_air_camera_isp_page = lv_menu_page_create(menu, LV_SYMBOL_EDIT" ISP");
+    apply_menu_transparency(sub_air_camera_isp_page);
     lv_obj_set_style_pad_hor(sub_air_camera_isp_page, lv_obj_get_style_pad_left(lv_menu_get_main_header(menu), 0), 0);
     lv_menu_separator_create(sub_air_camera_isp_page);
     create_air_camera_isp_menu(sub_air_camera_isp_page);
 
     sub_air_camera_fpv_page = lv_menu_page_create(menu, LV_SYMBOL_EYE_OPEN" FPV");
+    apply_menu_transparency(sub_air_camera_fpv_page);
     lv_obj_set_style_pad_hor(sub_air_camera_fpv_page, lv_obj_get_style_pad_left(lv_menu_get_main_header(menu), 0), 0);
     lv_menu_separator_create(sub_air_camera_fpv_page);
     create_air_camera_fpv_menu(sub_air_camera_fpv_page);
 
     sub_air_camera_page = lv_menu_page_create(menu, LV_SYMBOL_IMAGE" Camera");
+    apply_menu_transparency(sub_air_camera_page);
     lv_obj_set_style_pad_hor(sub_air_camera_page, lv_obj_get_style_pad_left(lv_menu_get_main_header(menu), 0), 0);
     lv_menu_separator_create(sub_air_camera_page);
     create_air_camera_menu(sub_air_camera_page, sub_air_camera_video_page, sub_air_camera_image_page, sub_air_camera_recording_page, sub_air_camera_isp_page, sub_air_camera_fpv_page);
 
     sub_air_telemetry_page = lv_menu_page_create(menu, LV_SYMBOL_DOWNLOAD" Drone Telemetry");
+    apply_menu_transparency(sub_air_telemetry_page);
     lv_obj_set_style_pad_hor(sub_air_telemetry_page, lv_obj_get_style_pad_left(lv_menu_get_main_header(menu), 0), 0);
     lv_menu_separator_create(sub_air_telemetry_page);
     create_air_telemetry_menu(sub_air_telemetry_page);
 
     sub_air_actions_page = lv_menu_page_create(menu, LV_SYMBOL_PLAY" Actions");
+    apply_menu_transparency(sub_air_actions_page);
     lv_obj_set_style_pad_hor(sub_air_actions_page, lv_obj_get_style_pad_left(lv_menu_get_main_header(menu), 0), 0);
     lv_menu_separator_create(sub_air_actions_page);
     create_air_actions_menu(sub_air_actions_page);
 
     sub_gs_dvr_page = lv_menu_page_create(menu, LV_SYMBOL_VIDEO" DVR");
+    apply_menu_transparency(sub_gs_dvr_page);
     lv_obj_set_style_pad_hor(sub_gs_dvr_page, lv_obj_get_style_pad_left(lv_menu_get_main_header(menu), 0), 0);
     lv_menu_separator_create(sub_gs_dvr_page);
     create_gs_dvr_menu(sub_gs_dvr_page);
 
     sub_gs_wfbng_page = lv_menu_page_create(menu, LV_SYMBOL_WIFI" WFB-NG");
+    apply_menu_transparency(sub_gs_wfbng_page);
     lv_obj_set_style_pad_hor(sub_gs_wfbng_page, lv_obj_get_style_pad_left(lv_menu_get_main_header(menu), 0), 0);
     lv_menu_separator_create(sub_gs_wfbng_page);
     create_gs_wfbng_menu(sub_gs_wfbng_page);
 
     sub_gs_apfpv_page = lv_menu_page_create(menu, LV_SYMBOL_WIFI" APFPV");
+    apply_menu_transparency(sub_gs_apfpv_page);
     lv_obj_set_style_pad_hor(sub_gs_apfpv_page, lv_obj_get_style_pad_left(lv_menu_get_main_header(menu), 0), 0);
     lv_menu_separator_create(sub_gs_apfpv_page);
     create_apfpv_menu(sub_gs_apfpv_page);
 
     sub_gs_system_receiver_page = lv_menu_page_create(menu, LV_SYMBOL_WIFI" Receiver");
+    apply_menu_transparency(sub_gs_system_receiver_page);
     lv_obj_set_style_pad_hor(sub_gs_system_receiver_page, lv_obj_get_style_pad_left(lv_menu_get_main_header(menu), 0), 0);
     lv_menu_separator_create(sub_gs_system_receiver_page);
     create_gs_system_receiver_menu(sub_gs_system_receiver_page);
 
     sub_gs_system_display_page = lv_menu_page_create(menu, LV_SYMBOL_IMAGE" Display");
+    apply_menu_transparency(sub_gs_system_display_page);
     lv_obj_set_style_pad_hor(sub_gs_system_display_page, lv_obj_get_style_pad_left(lv_menu_get_main_header(menu), 0), 0);
     lv_menu_separator_create(sub_gs_system_display_page);
     create_gs_system_display_menu(sub_gs_system_display_page);
 
     sub_gs_system_dvr_page = lv_menu_page_create(menu, LV_SYMBOL_VIDEO" DVR");
+    apply_menu_transparency(sub_gs_system_dvr_page);
     lv_obj_set_style_pad_hor(sub_gs_system_dvr_page, lv_obj_get_style_pad_left(lv_menu_get_main_header(menu), 0), 0);
     lv_menu_separator_create(sub_gs_system_dvr_page);
     create_gs_system_dvr_menu(sub_gs_system_dvr_page);
 
     sub_gs_system_page = lv_menu_page_create(menu, LV_SYMBOL_SETTINGS" System");
+    apply_menu_transparency(sub_gs_system_page);
     lv_obj_set_style_pad_hor(sub_gs_system_page, lv_obj_get_style_pad_left(lv_menu_get_main_header(menu), 0), 0);
     lv_menu_separator_create(sub_gs_system_page);
     create_gs_system_menu(sub_gs_system_page, sub_gs_system_receiver_page, sub_gs_system_display_page, sub_gs_system_dvr_page);
 
     sub_wlan_page = lv_menu_page_create(menu, LV_SYMBOL_WIFI" WiFi");
+    apply_menu_transparency(sub_wlan_page);
     lv_obj_set_style_pad_hor(sub_wlan_page, lv_obj_get_style_pad_left(lv_menu_get_main_header(menu), 0), 0);
     lv_menu_separator_create(sub_wlan_page);
     create_wifi_menu(sub_wlan_page);
 
     sub_gs_actions_page = lv_menu_page_create(menu, LV_SYMBOL_PLAY" Actions");
+    apply_menu_transparency(sub_gs_actions_page);
     lv_obj_set_style_pad_hor(sub_gs_actions_page, lv_obj_get_style_pad_left(lv_menu_get_main_header(menu), 0), 0);
     lv_menu_separator_create(sub_gs_actions_page);
     create_gs_actions_menu(sub_gs_actions_page);     
 
     /*Create a root page*/
     root_page = lv_menu_page_create(menu, "Menu");
+    apply_menu_transparency(root_page);
     lv_obj_set_style_pad_hor(root_page, lv_obj_get_style_pad_left(lv_menu_get_main_header(menu), 0), 0);
 
     create_text(root_page, NULL, "Drone Settings", NULL, NULL, false, LV_MENU_ITEM_BUILDER_VARIANT_1);    

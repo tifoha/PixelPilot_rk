@@ -9,6 +9,7 @@
 #include "styles.h"
 #include "ui.h"
 #include "executor.h"
+#include "log.h"
 #include "../WiFiRSSIMonitor.h"
 #include "../menu.h"
 
@@ -34,7 +35,6 @@ extern lv_obj_t * gs_system_cont;
 extern lv_obj_t * gs_wlan_cont;
 extern lv_obj_t * gs_actions_cont;
 extern lv_group_t *main_group;
-extern lv_group_t * error_group;
 extern lv_obj_t * size; // air camera size setting wfb-ng only
 extern lv_obj_t * fps; // air camera fps setting wfb-ng only
 extern lv_obj_t * bitrate; // air camera bitrate setting wfb-ng only
@@ -44,9 +44,6 @@ extern lv_obj_t * osd_fps;
 extern lv_obj_t * air_gs_rendering;
 extern lv_obj_t * air_telemetry_msposd_text;
 extern lv_obj_t * air_telemetry_msposd_section;
-
-
-extern lv_obj_t * msgbox;
 
 lv_group_t *loader_group;
 pthread_t loader_thread;
@@ -72,14 +69,10 @@ void loader_cancel_button_cb(lv_event_t * e) {
         lv_msgbox_close(loader_msgbox);
     lv_unlock();
     
-    // Restore input device group
-    if (!error_group) {
-        lv_indev_set_group(indev_drv, menu_page_data->indev_group);
-    } else {
-        // Find the first focusable object recursively
-        lv_group_focus_next(error_group);
-        lv_indev_set_group(indev_drv, error_group);
-    }
+    // Restore input device group -- the error toast (see executor.c)
+    // never touches indev/group state, so there's no error_group to check
+    // here anymore.
+    lv_indev_set_group(indev_drv, menu_page_data->indev_group);
 
     lv_group_del(loader_group);
     loader_group = NULL;
@@ -121,11 +114,15 @@ void* generic_page_load_thread(void *arg) {
 
     lv_unlock();
 
-    // Process entries with cancellation point
+    // Process entries with cancellation point. A failing entry's reload()
+    // shows a non-modal error toast (executor.c) and otherwise has no
+    // effect here -- it doesn't touch focus/group state, so there's no
+    // need to stop early to protect anything; remaining entries just keep
+    // loading normally.
     for (int i = 0; i < menu_page_data->entry_count; i++) {
         // Add cancellation point
         pthread_testcancel();
-        
+
         PageEntry *entry = &entries[i];
         if (entry->caption && entry->reload) {
             lv_lock();
@@ -140,10 +137,7 @@ void* generic_page_load_thread(void *arg) {
     lv_msgbox_close(loader_msgbox);
     lv_unlock();
 
-    if (! error_group)
-        lv_indev_set_group(indev_drv,menu_page_data->indev_group);
-    else
-        lv_indev_set_group(indev_drv,error_group);
+    lv_indev_set_group(indev_drv, menu_page_data->indev_group);
 
     lv_group_del(loader_group);
     loader_group = NULL;

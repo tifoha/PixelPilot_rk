@@ -46,7 +46,10 @@ void pp_menu_main(void)
     lv_obj_set_style_pad_left(menu_cont, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_pad_top(menu_cont, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_pad_right(menu_cont, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_pad_bottom(menu_cont, 0, LV_PART_MAIN | LV_STATE_DEFAULT);    
+    lv_obj_set_style_pad_bottom(menu_cont, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+    apply_menu_transparency(menu_cont); // otherwise this opaque container (the real outermost
+                                          // visible layer, between pp_menu_screen and the menu
+                                          // widget) hides any transparency set deeper inside
 
     pp_header_create(menu_cont);
 

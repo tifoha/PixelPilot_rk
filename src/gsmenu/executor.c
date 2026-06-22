@@ -22,82 +22,69 @@ typedef struct {
 
 
 lv_group_t * current_group;
-lv_group_t * error_group = NULL;
 extern lv_obj_t * menu;
 extern lv_indev_t * indev_drv;
-lv_obj_t * msgbox = NULL;
-lv_obj_t * msgbox_label = NULL;
-char buffer[BUFFER_SIZE];
 extern lv_group_t *loader_group;
 extern lv_group_t * default_group;
 extern lv_group_t * main_group;
+extern int gsmenu_error_timeout_ms; // from pixelpilot.yaml gsmenu.error_timeout_ms; see osd.cpp
 
+// Non-modal, auto-dismissing error toast -- deliberately does NOT touch
+// indev/group/focus state at all (no lv_indev_set_group, no
+// lv_group_add_obj, no close button to focus). It's a service message:
+// the actual command/exit-code/stdout/stderr are already in the log via
+// gsmenu_log_debug below, so the on-screen text is just a one-line
+// summary. A later error while one is already showing replaces the text
+// and restarts the timeout, rather than stacking multiple toasts.
+static lv_obj_t * error_toast = NULL;
+static lv_obj_t * error_toast_label = NULL;
+static lv_timer_t * error_toast_timer = NULL;
 
-void error_button_callback(lv_event_t * e) {
-    lv_msgbox_close(msgbox);
-    lv_group_del(error_group);
-    error_group = NULL;
-    msgbox_label = NULL;
-    msgbox = NULL;
-    buffer[0] = '\0';
-    lv_obj_t * current_page = lv_menu_get_cur_main_page(menu);
-    menu_page_data_t* menu_page_data = lv_obj_get_user_data(current_page);
-    if (menu_page_data && menu_page_data->indev_group) {
-        lv_group_set_default(menu_page_data->indev_group);
-        lv_indev_set_group(indev_drv, menu_page_data->indev_group);
-    } else {
-        lv_group_set_default(main_group);
-        lv_indev_set_group(indev_drv, main_group);
+static void error_toast_timer_cb(lv_timer_t * timer) {
+    lv_lock();
+    if (lv_obj_is_valid(error_toast)) {
+        lv_obj_del(error_toast);
     }
-}
-
-
-void build_output_string(char *buffer, const char *msgbox_text, CommandResult result ) {
-    buffer[0] = '\0';
-    snprintf(buffer + strlen(buffer), BUFFER_SIZE - strlen(buffer), "%s########\n", msgbox_text);
-    snprintf(buffer + strlen(buffer), BUFFER_SIZE - strlen(buffer), "command: %s\n", result.command);
-    snprintf(buffer + strlen(buffer), BUFFER_SIZE - strlen(buffer), "exit_status: %d\n", result.exit_status);
-    snprintf(buffer + strlen(buffer), BUFFER_SIZE - strlen(buffer), "stdout: %s\n", result.stdout_output);
-    snprintf(buffer + strlen(buffer), BUFFER_SIZE - strlen(buffer), "stderr: %s\n", result.stderr_output);
+    error_toast = NULL;
+    error_toast_label = NULL;
+    error_toast_timer = NULL;
+    lv_unlock();
 }
 
 void show_error(CommandResult result) {
     lv_lock();
 
-    if (!error_group) {
-        error_group = lv_group_create();
-    }
-    lv_group_set_default(error_group);
-    lv_indev_set_group(indev_drv, error_group);
+    gsmenu_log_debug("command failed (exit %d): %s | stdout: %s | stderr: %s",
+                      result.exit_status, result.command,
+                      result.stdout_output ? result.stdout_output : "",
+                      result.stderr_output ? result.stderr_output : "");
 
-    if ( ! lv_obj_is_valid(msgbox)) {
+    if (!lv_obj_is_valid(error_toast)) {
         lv_obj_t * top = lv_layer_top();
-        msgbox = lv_msgbox_create(top);
-        lv_obj_t * backdrop = lv_obj_get_child_by_type(top,0,&lv_msgbox_backdrop_class);
-        if (backdrop)
-            lv_obj_swap(backdrop, msgbox);
-        lv_obj_set_style_max_height(msgbox,lv_pct(80),LV_PART_MAIN);
-        lv_msgbox_add_title(msgbox, "Error");
-        lv_obj_t * button = lv_msgbox_add_close_button(msgbox);
-        lv_obj_add_event_cb(button, error_button_callback, LV_EVENT_CLICKED, NULL);
-        lv_obj_add_style(button, &style_openipc, LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_add_style(button, &style_openipc_outline, LV_PART_MAIN | LV_STATE_FOCUS_KEY);
-        lv_group_add_obj(error_group, button);
-        lv_group_focus_obj(button);
-        msgbox_label = lv_msgbox_add_text(msgbox,"");
-        // lv_label_set_long_mode(msgbox_label, LV_LABEL_LONG_MODE_SCROLL);
-    };
+        error_toast = lv_obj_create(top);
+        lv_obj_remove_flag(error_toast, LV_OBJ_FLAG_CLICKABLE);
+        // Fixed size set once, up front -- no LV_SIZE_CONTENT recalculation
+        // after the label gets its text, and no_obj transition/animation,
+        // so there's no visible resize/fade as it appears.
+        lv_obj_set_style_anim_duration(error_toast, 0, LV_PART_MAIN);
+        lv_obj_set_size(error_toast, lv_pct(40), 70);
+        lv_obj_align(error_toast, LV_ALIGN_BOTTOM_RIGHT, -10, -10);
+        lv_obj_add_style(error_toast, &style_openipc_dark_background, LV_PART_MAIN);
+        error_toast_label = lv_label_create(error_toast);
+        lv_obj_set_style_anim_duration(error_toast_label, 0, LV_PART_MAIN);
+        lv_obj_set_width(error_toast_label, lv_pct(100));
+        lv_label_set_long_mode(error_toast_label, LV_LABEL_LONG_WRAP);
+    }
 
-    build_output_string(
-        buffer,
-        lv_label_get_text(msgbox_label),  // LVGL label text
-        result
-    );
+    char summary[160];
+    snprintf(summary, sizeof(summary), "Command failed (exit %d): %s", result.exit_status, result.command);
+    lv_label_set_text(error_toast_label, summary);
 
-    lv_label_set_text(msgbox_label,buffer);
-    lv_obj_set_width(msgbox, lv_pct(80));
+    if (error_toast_timer) lv_timer_del(error_toast_timer);
+    error_toast_timer = lv_timer_create(error_toast_timer_cb, gsmenu_error_timeout_ms, NULL);
+    lv_timer_set_repeat_count(error_toast_timer, 1);
+
     lv_unlock();
-
 }
 
 char* run_command(const char* command) {
@@ -197,14 +184,12 @@ void check_thread_complete(lv_timer_t* timer) {
         lv_obj_del(data->spinner);
         lv_timer_del(timer);
         
-        // Handle error group if needed
-        if (error_group) {
-            lv_indev_set_group(indev_drv, error_group);
-        } else {
-            lv_obj_t * current_page = lv_menu_get_cur_main_page(menu);
-            menu_page_data_t* menu_page_data = lv_obj_get_user_data(current_page);
-            lv_indev_set_group(indev_drv,menu_page_data->indev_group);
-        }
+        // Restore input device group -- the error toast (see show_error())
+        // never touches indev/group state, so there's no error_group to
+        // check here anymore.
+        lv_obj_t * current_page = lv_menu_get_cur_main_page(menu);
+        menu_page_data_t* menu_page_data = lv_obj_get_user_data(current_page);
+        lv_indev_set_group(indev_drv,menu_page_data->indev_group);
 
         // Free the command string if it exists
         if (data->command) {

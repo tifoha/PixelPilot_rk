@@ -1,5 +1,9 @@
 gsmenu:
   enabled: true
+  # Menu background opacity, 0 (fully see-through video) - 255 (opaque). Default 255.
+  transparency: 255
+  # How long the error toast (bottom-right, non-modal) stays before auto-dismissing, in ms. Default 4000.
+  error_timeout_ms: 5000
   gpio:
     # RuncamVRX
     left: 13

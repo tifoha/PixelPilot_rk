@@ -72,6 +72,13 @@ extern pthread_cond_t video_cond;
 bool osd_update_ready = false;
 bool menu_active = false;
 bool gsmenu_enabled = false;
+// Default = fully opaque menu (today's historical behavior when this
+// setting isn't configured). Already in post-inversion-compensated form
+// (the actual bg_opa value LVGL gets) -- see the inversion comment where
+// the YAML value is parsed in main.cpp for why 0 here means opaque, not
+// transparent.
+int gsmenu_transparency = 0;
+int gsmenu_error_timeout_ms = 4000; // auto-dismiss delay for the error toast; see show_error() in gsmenu/executor.c
 
 OsdGl osd_gl;
 extern bool enable_live_colortrans;
@@ -927,7 +934,14 @@ protected:
 
     std::vector<Token> tokenize(const std::string& tpl) {
         std::vector<Token> tokens;
-        std::regex token_regex(R"(%%|%[bisu]|%(\.\d+)?f|[^%]+)"); // Match placeholders and literals
+        // 'd' must be in this character class too -- the switch below already
+        // treats %d as a synonym for %i (both -> TokenType::Int), but if the
+        // tokenizing regex doesn't recognize %d as a placeholder at all, it
+        // gets swallowed into a literal text token instead, silently
+        // shifting every subsequent placeholder onto the wrong fact index
+        // (e.g. an %i/%d-bound INT fact ends up read by the next %u token,
+        // which calls getUintValue() on it and crashes).
+        std::regex token_regex(R"(%%|%[bisud]|%(\.\d+)?f|[^%]+)"); // Match placeholders and literals
         std::sregex_iterator iter(tpl.begin(), tpl.end(), token_regex);
         std::sregex_iterator end;
 

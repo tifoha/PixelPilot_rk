@@ -56,6 +56,7 @@ extern "C" {
 #include "mpp_encoder.h"
 #include "frame_processor.h"
 #include "gstrtpreceiver.h"
+#include "stream_manager.h"
 #include "scheduling_helper.hpp"
 #include "time_util.h"
 #include "os_mon.hpp"
@@ -97,10 +98,13 @@ struct timespec frame_stats[1000];
 struct modeset_output *output_list;
 int frm_eos = 0;
 int drm_fd = 0;
+static StreamManager *g_stream_manager = nullptr; // set once, in main(), only in multistream mode
 pthread_mutex_t video_mutex;
 pthread_cond_t video_cond;
 extern bool osd_update_ready;
 extern bool gsmenu_enabled;
+extern int gsmenu_transparency;
+extern int gsmenu_error_timeout_ms;
 int video_zpos = 1;
 
 void set_mpp_decoding_parameters(MppApi * mpi, MppCtx ctx);
@@ -1159,12 +1163,29 @@ void printHelp() {
   );
 }
 
+// Multistream switcher hooks, called from input.cpp's GPIO/keyboard
+// handlers. No-ops if not running in multistream mode (g_stream_manager
+// stays null when no --stream flags were given).
+void switch_to_next_stream(void) {
+	if (g_stream_manager) g_stream_manager->switch_to_next();
+}
+void switch_to_prev_stream(void) {
+	if (g_stream_manager) g_stream_manager->switch_to_prev();
+}
+
 // main
 #ifndef TEST
 
 int main(int argc, char **argv)
 {
-	int ret;	
+	// Idempotent -- GstRtpReceiver's constructor also calls gst_init_check()
+	// for the legacy single-stream path, but the multistream path
+	// (stream_pipeline.cpp) calls gst_parse_launch() directly without ever
+	// constructing a GstRtpReceiver, so it needs this done explicitly here
+	// instead of relying on that side effect.
+	gst_init(nullptr, nullptr);
+
+	int ret;
 	int i, j;
 	int mavlink_thread = 0;
 	int print_modelist = 0;
@@ -1187,6 +1208,13 @@ int main(int argc, char **argv)
     pidFile << getpid();
     pidFile.close();
 	float video_scale_factor = 1.0;
+
+	// Multistream switcher: one entry per --stream flag. Empty means legacy
+	// single-stream mode (-p/--codec), preserving today's exact behavior --
+	// see stream_manager.h for the new path, only taken when non-empty.
+	struct StreamArg { int port; VideoCodec stream_codec; };
+	std::vector<StreamArg> stream_args;
+	std::unique_ptr<StreamManager> stream_manager;
 
 	// Load console arguments
 	__BeginParseConsoleArguments__(printHelp) 
@@ -1214,6 +1242,38 @@ int main(int argc, char **argv)
 			fprintf(stderr, "unsupported video codec");
 			return -1;
 		}
+		continue;
+	}
+
+	// --stream <port>[:<codec>], repeatable. Any --stream flag present at
+	// all switches the whole process into multistream-switcher mode,
+	// ignoring -p entirely (see stream_args branch further below) --
+	// codec, if omitted, resolves against --codec's value (whatever it
+	// ends up being after the whole argv is parsed, not just up to here).
+	__OnArgument("--stream") {
+		char buf[64];
+		const char *arg = __ArgValue;
+		if (strlen(arg) >= sizeof(buf)) {
+			fprintf(stderr, "--stream argument too long: %s\n", arg);
+			return -1;
+		}
+		strcpy(buf, arg);
+		char *colon = strchr(buf, ':');
+		VideoCodec stream_codec = VideoCodec::UNKNOWN; // UNKNOWN = "use --codec's value"
+		if (colon) {
+			*colon = '\0';
+			stream_codec = video_codec(colon + 1);
+			if (stream_codec == VideoCodec::UNKNOWN) {
+				fprintf(stderr, "unsupported codec in --stream %s\n", arg);
+				return -1;
+			}
+		}
+		int port = atoi(buf);
+		if (port <= 0) {
+			fprintf(stderr, "invalid port in --stream %s\n", arg);
+			return -1;
+		}
+		stream_args.push_back({port, stream_codec});
 		continue;
 	}
 
@@ -1441,6 +1501,12 @@ int main(int argc, char **argv)
 
 	__EndParseConsoleArguments__
 
+	// Resolve any --stream entries that omitted :codec against --codec's
+	// final value (argv order shouldn't matter for this).
+	for (auto &sa : stream_args) {
+		if (sa.stream_codec == VideoCodec::UNKNOWN) sa.stream_codec = codec;
+	}
+
 	{
 		std::vector<spdlog::sink_ptr> sinks;
 		auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
@@ -1486,6 +1552,26 @@ int main(int argc, char **argv)
 		if (config["gsmenu"]) {
             if (config["gsmenu"]["enabled"]) {
                 gsmenu_enabled = config["gsmenu"]["enabled"].as<bool>();
+            }
+            if (config["gsmenu"]["transparency"]) {
+                // Inverted here, once, so every downstream consumer
+                // (style_init/apply_menu_transparency in gsmenu/styles.c)
+                // can just call lv_obj_set_style_bg_opa() normally.
+                // The OSD DRM plane's "pixel blend mode" is set to
+                // Coverage (drm.c, modeset_atomic_prepare_commit) since
+                // that's required for opacity to have any visible effect
+                // at all on this driver -- but doing so empirically
+                // inverts the visible result (0=opaque, 255=transparent)
+                // from LVGL's normal bg_opa convention. Confirmed by
+                // testing both extremes with and without that DRM
+                // property set. Compensating here keeps the YAML key's
+                // meaning ("transparency": low=see-through,
+                // high=opaque) matching user expectation end-to-end.
+                int yaml_value = config["gsmenu"]["transparency"].as<int>();
+                gsmenu_transparency = 255 - yaml_value;
+            }
+            if (config["gsmenu"]["error_timeout_ms"]) {
+                gsmenu_error_timeout_ms = config["gsmenu"]["error_timeout_ms"].as<int>();
             }
 		if (gsmenu_enabled && config["gsmenu"]["actions"]) {
 			if (config["gsmenu"]["actions"]["air"]) {
@@ -1627,24 +1713,29 @@ int main(int argc, char **argv)
 	}
 	
 	////////////////////////////////// MPI SETUP
-	MppPacket packet;
+	// Skipped entirely in multistream mode -- each StreamPipeline owns its
+	// own MPP context/packet instead of this single global one.
+	MppPacket packet = nullptr;
+	uint8_t* nal_buffer = nullptr;
 
-	uint8_t* nal_buffer = (uint8_t*)malloc(1024 * 1024);
-	assert(nal_buffer);
-	ret = mpp_packet_init(&packet, nal_buffer, READ_BUF_SIZE);
-	assert(!ret);
+	if (stream_args.empty()) {
+		nal_buffer = (uint8_t*)malloc(1024 * 1024);
+		assert(nal_buffer);
+		ret = mpp_packet_init(&packet, nal_buffer, READ_BUF_SIZE);
+		assert(!ret);
 
-	ret = mpp_create(&mpi.ctx, &mpi.mpi);
-	assert(!ret);
-    set_mpp_decoding_parameters(mpi.mpi,mpi.ctx);
-	ret = mpp_init(mpi.ctx, MPP_CTX_DEC, mpp_type);
-    assert(!ret);
-    set_mpp_decoding_parameters(mpi.mpi,mpi.ctx);
+		ret = mpp_create(&mpi.ctx, &mpi.mpi);
+		assert(!ret);
+		set_mpp_decoding_parameters(mpi.mpi,mpi.ctx);
+		ret = mpp_init(mpi.ctx, MPP_CTX_DEC, mpp_type);
+		assert(!ret);
+		set_mpp_decoding_parameters(mpi.mpi,mpi.ctx);
 
-	// blocked/wait read of frame in thread
-	int param = MPP_POLL_BLOCK;
-	ret = mpi.mpi->control(mpi.ctx, MPP_SET_OUTPUT_BLOCK, &param);
-	assert(!ret);
+		// blocked/wait read of frame in thread
+		int param = MPP_POLL_BLOCK;
+		ret = mpi.mpi->control(mpi.ctx, MPP_SET_OUTPUT_BLOCK, &param);
+		assert(!ret);
+	}
 
 
 	////////////////////////////////// SIGNAL SETUP
@@ -1732,8 +1823,10 @@ int main(int argc, char **argv)
 			if (reencoder) reencoder->request_idr();
 		}
 	}
-	ret = pthread_create(&tid_frame, NULL, __FRAME_THREAD__, NULL);
-	assert(!ret);
+	if (stream_args.empty()) {
+		ret = pthread_create(&tid_frame, NULL, __FRAME_THREAD__, NULL);
+		assert(!ret);
+	}
 	ret = pthread_create(&tid_display, NULL, __DISPLAY_THREAD__, NULL);
 	assert(!ret);
 	if (enable_osd) {
@@ -1756,7 +1849,16 @@ int main(int argc, char **argv)
 			assert(!ret);
 		}
 
-		osd_thread_params *args = (osd_thread_params *)malloc(sizeof *args);
+		// new, not malloc: osd_thread_params::config is an nlohmann::json
+		// (non-POD, real constructor/destructor) -- malloc'd memory never
+		// runs that constructor, so the assignment below would be writing
+		// into not-actually-a-json-object memory (undefined behavior).
+		// Latent pre-existing bug, exposed here by the multistream path's
+		// different heap allocation pattern shifting what garbage ends up
+		// in that malloc'd block; not freed anywhere today (a startup-time,
+		// once-per-process allocation) so switching to `new` needs no
+		// matching deallocation-site change.
+		osd_thread_params *args = new osd_thread_params();
         args->fd = drm_fd;
         args->out = output_list;
 		args->config = osd_config;
@@ -1765,13 +1867,34 @@ int main(int argc, char **argv)
 	}
 
 	////////////////////////////////////////////// MAIN LOOP
-    read_gstreamerpipe_stream((void**)packet, listen_port, unix_socket, codec);
+	if (stream_args.empty()) {
+		read_gstreamerpipe_stream((void**)packet, listen_port, unix_socket, codec);
+	} else {
+		stream_manager = std::make_unique<StreamManager>(drm_fd, output_list, video_zpos);
+		g_stream_manager = stream_manager.get();
+		for (auto &sa : stream_args) {
+			stream_manager->add_stream(sa.port, sa.stream_codec);
+			spdlog::info("stream {}: udp:{} codec={}", stream_manager->stream_count() - 1, sa.port,
+			             sa.stream_codec == VideoCodec::H264 ? "h264" : "h265");
+		}
+		stream_manager->start_all();
+		main_loop();
+		stream_manager->stop_all();
+		// __FRAME_THREAD__ never ran in this mode, so frm_eos was never set
+		// by its own decoder-EOS path (the single-stream case's mechanism
+		// for unblocking __DISPLAY_THREAD__'s loop condition below) -- set
+		// it explicitly here instead, then force-wake the wait exactly like
+		// the existing single-stream cleanup does for tid_frame already.
+		frm_eos = 1;
+	}
 
 	////////////////////////////////////////////// MPI CLEANUP
 
-	ret = pthread_join(tid_frame, NULL);
-	assert(!ret);
-	
+	if (stream_args.empty()) {
+		ret = pthread_join(tid_frame, NULL);
+		assert(!ret);
+	}
+
 	ret = pthread_mutex_lock(&video_mutex);
 	assert(!ret);	
 	ret = pthread_cond_signal(&video_cond);
@@ -1818,29 +1941,31 @@ int main(int argc, char **argv)
 		}
 	}
 
-	ret = mpi.mpi->reset(mpi.ctx);
-	assert(!ret);
-
-	if (mpi.frm_grp) {
-		ret = mpp_buffer_group_put(mpi.frm_grp);
+	if (stream_args.empty()) {
+		ret = mpi.mpi->reset(mpi.ctx);
 		assert(!ret);
-		mpi.frm_grp = NULL;
-		for (i=0; i<MAX_FRAMES; i++) {
-			ret = drmModeRmFB(drm_fd, mpi.frame_to_drm[i].fb_id);
+
+		if (mpi.frm_grp) {
+			ret = mpp_buffer_group_put(mpi.frm_grp);
 			assert(!ret);
-			struct drm_mode_destroy_dumb dmdd;
-			memset(&dmdd, 0, sizeof(dmdd));
-			dmdd.handle = mpi.frame_to_drm[i].handle;
-			do {
-				ret = ioctl(drm_fd, DRM_IOCTL_MODE_DESTROY_DUMB, &dmdd);
-			} while (ret == -1 && (errno == EINTR || errno == EAGAIN));
-			assert(!ret);
+			mpi.frm_grp = NULL;
+			for (i=0; i<MAX_FRAMES; i++) {
+				ret = drmModeRmFB(drm_fd, mpi.frame_to_drm[i].fb_id);
+				assert(!ret);
+				struct drm_mode_destroy_dumb dmdd;
+				memset(&dmdd, 0, sizeof(dmdd));
+				dmdd.handle = mpi.frame_to_drm[i].handle;
+				do {
+					ret = ioctl(drm_fd, DRM_IOCTL_MODE_DESTROY_DUMB, &dmdd);
+				} while (ret == -1 && (errno == EINTR || errno == EAGAIN));
+				assert(!ret);
+			}
 		}
+
+		mpp_packet_deinit(&packet);
+		mpp_destroy(mpi.ctx);
+		free(nal_buffer);
 	}
-		
-	mpp_packet_deinit(&packet);
-	mpp_destroy(mpi.ctx);
-	free(nal_buffer);
 	
 	////////////////////////////////////////////// DRM CLEANUP
 	restore_planes_zpos(drm_fd, output_list);

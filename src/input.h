@@ -29,6 +29,12 @@ void handle_keyboard_input(void);
 
 void toggle_rec_enabled(void);
 
+// Multistream switcher -- no-ops if not in multistream mode (no --stream
+// flags given). Defined in main.cpp, backed by the StreamManager built
+// there; see stream_manager.h.
+void switch_to_next_stream(void);
+void switch_to_prev_stream(void);
+
 // Custom function to simulate keyboard input
 static void virtual_keyboard_read(lv_indev_t * indev, lv_indev_data_t * data);
 

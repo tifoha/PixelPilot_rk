@@ -167,7 +167,11 @@ set(LIB_SOURCE_FILES
         src/WiFiRSSIMonitor.cpp
         src/scheduling_helper.hpp
         src/gstrtpreceiver.cpp
-        src/gstrtpreceiver.h)
+        src/gstrtpreceiver.h
+        src/stream_pipeline.cpp
+        src/stream_pipeline.h
+        src/stream_manager.cpp
+        src/stream_manager.h)
 set(SOURCE_FILES
   ${LIB_SOURCE_FILES}
   src/main.cpp

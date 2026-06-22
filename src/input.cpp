@@ -263,43 +263,83 @@ static void handle_evdev_input() {
     }
 }
 
+void toggle_screen(void); // defined below; used by send_long_press_event above its definition
+
+// 'center'-long is the one dedicated "open / back / cancel" gesture:
+//   - menu closed            -> open it
+//   - menu open, browsing    -> LV_KEY_HOME (existing handlers already do
+//                                the right thing here: one level back if
+//                                inside a sub-page, or close the menu
+//                                entirely back to video if already at the
+//                                top -- see helper.c's generic_back_event_handler
+//                                vs ui.c's main-group HOME handler)
+//   - menu open, editing a   -> LV_KEY_ESC (existing per-widget
+//     value (slider/dropdown/   LV_EVENT_CANCEL handlers, e.g.
+//     keyboard)                 slider_event_cb / video_scale_revert_cb,
+//                                already capture-on-entry and revert-on-ESC;
+//                                this just wires a button to send it)
 void send_long_press_event(size_t button_index) {
-    if (strcmp(gpio_buttons[button_index].name, "right") == 0) {
-        next_key = LV_KEY_ENTER;
-        next_key_pressed = true;
+    if (strcmp(gpio_buttons[button_index].name, "center") != 0) return;
 
-        printf("GPIO Long Press: %s (acting as center) (Pin: %d, Chip: %s)\n",
-               gpio_buttons[button_index].name,
-               gpio_buttons[button_index].pin_number,
-               gpio_buttons[button_index].chip_name);
+    if (!menu_active) {
+        toggle_screen();
+        printf("GPIO Long Press: center (opening menu)\n");
+        return;
     }
-    else if (strcmp(gpio_buttons[button_index].name, "left") == 0 && !menu_active) {
-        toggle_rec_enabled();
 
-        printf("GPIO Long Press: %s (toggling recording) (Pin: %d, Chip: %s)\n",
-               gpio_buttons[button_index].name,
-               gpio_buttons[button_index].pin_number,
-               gpio_buttons[button_index].chip_name);
+    if (control_mode == GSMENU_CONTROL_MODE_NAV) {
+        next_key = LV_KEY_HOME;
+        printf("GPIO Long Press: center (back/close menu)\n");
+    } else {
+        next_key = LV_KEY_ESC;
+        printf("GPIO Long Press: center (cancel edit)\n");
     }
+    next_key_pressed = true;
 }
 
 void send_button_event(size_t button_index) {
     if (gpio_buttons[button_index].name == NULL) return;
 
+    // While the menu is closed: 'rec' keeps its own function below; up/down
+    // switch streams (no-ops if the multistream switcher isn't running --
+    // see switch_to_next_stream/switch_to_prev_stream in main.cpp);
+    // left/right are reserved, no function yet. None of these fall through
+    // to the NAV-mode branch below, which only makes sense once the menu is
+    // actually open. Opening the menu itself is exclusively a
+    // center-long-press gesture (see send_long_press_event).
+    if (!menu_active) {
+        if (strcmp(gpio_buttons[button_index].name, "up") == 0) {
+            switch_to_prev_stream();
+            return;
+        }
+        if (strcmp(gpio_buttons[button_index].name, "down") == 0) {
+            switch_to_next_stream();
+            return;
+        }
+        if (strcmp(gpio_buttons[button_index].name, "rec") != 0) {
+            return; // left/right: reserved, no function yet
+        }
+        // 'rec' falls through to the NAV-mode switch below.
+    }
+
     // Adjust for control_mode
     switch (control_mode) {
         case GSMENU_CONTROL_MODE_NAV:
-            if (strcmp(gpio_buttons[button_index].name, "up") == 0) {
+            // up/down move through the focus chain; left/right do the same
+            // (one chain, not two independent axes -- LVGL's group focus
+            // order already tends to follow left-to-right within a row, so
+            // this covers "items to the side" without inventing a second
+            // navigation primitive that doesn't exist in this menu's
+            // layout). center-short enters edit mode on the focused item;
+            // right is deliberately NOT also ENTER anymore -- center is
+            // the sole "enter/confirm" gesture now, right is nav-only.
+            if (strcmp(gpio_buttons[button_index].name, "up") == 0 ||
+                strcmp(gpio_buttons[button_index].name, "left") == 0) {
                 next_key = LV_KEY_PREV;
-            } 
-            else if (strcmp(gpio_buttons[button_index].name, "down") == 0) {
+            }
+            else if (strcmp(gpio_buttons[button_index].name, "down") == 0 ||
+                     strcmp(gpio_buttons[button_index].name, "right") == 0) {
                 next_key = LV_KEY_NEXT;
-            }
-            else if (strcmp(gpio_buttons[button_index].name, "left") == 0) {
-                next_key = LV_KEY_HOME;
-            }
-            else if (strcmp(gpio_buttons[button_index].name, "right") == 0) {
-                next_key = LV_KEY_ENTER;
             }
             else if (strcmp(gpio_buttons[button_index].name, "center") == 0) {
                 next_key = LV_KEY_ENTER;
@@ -311,39 +351,35 @@ void send_button_event(size_t button_index) {
                             toggle_rec_enabled();
             }
             break;
-            
-        case GSMENU_CONTROL_MODE_EDIT:
+
+        case GSMENU_CONTROL_MODE_EDIT: // dropdown: cycle options
             if (strcmp(gpio_buttons[button_index].name, "up") == 0) {
                 next_key = LV_KEY_UP;
-            } 
+            }
             else if (strcmp(gpio_buttons[button_index].name, "down") == 0) {
                 next_key = LV_KEY_DOWN;
             }
-            else if (strcmp(gpio_buttons[button_index].name, "left") == 0) {
-                next_key = LV_KEY_ESC;
-            }
-            else if (strcmp(gpio_buttons[button_index].name, "right") == 0 ||
-                     strcmp(gpio_buttons[button_index].name, "center") == 0) {
+            else if (strcmp(gpio_buttons[button_index].name, "center") == 0) {
                 next_key = LV_KEY_ENTER;
             }
+            // left/right unbound here -- ESC moved to center-long, and
+            // dropdown cycling is up/down-only.
             break;
-            
+
         case GSMENU_CONTROL_MODE_SLIDER:
-            if (strcmp(gpio_buttons[button_index].name, "up") == 0) {
-                next_key = LV_KEY_RIGHT;
-            } 
-            else if (strcmp(gpio_buttons[button_index].name, "down") == 0) {
-                next_key = LV_KEY_LEFT;
+            if (strcmp(gpio_buttons[button_index].name, "left") == 0) {
+                next_key = LV_KEY_LEFT;  // decrease
             }
-            else if (strcmp(gpio_buttons[button_index].name, "left") == 0) {
-                next_key = LV_KEY_ESC;
+            else if (strcmp(gpio_buttons[button_index].name, "right") == 0) {
+                next_key = LV_KEY_RIGHT; // increase
             }
-            else if (strcmp(gpio_buttons[button_index].name, "right") == 0 ||
-                     strcmp(gpio_buttons[button_index].name, "center") == 0) {
-                next_key = LV_KEY_ENTER;
+            else if (strcmp(gpio_buttons[button_index].name, "center") == 0) {
+                next_key = LV_KEY_ENTER; // confirm, exit to NAV
             }
+            // up/down unbound here -- slider adjustment is left/right now;
+            // ESC (cancel/revert) moved to center-long.
             break;
-            
+
         case GSMENU_CONTROL_MODE_KEYBOARD:
             if (strcmp(gpio_buttons[button_index].name, "up") == 0) {
                 next_key = LV_KEY_UP;
@@ -397,18 +433,21 @@ void handle_gpio_input(void) {
                     gpio_buttons[i].long_press_sent = false;
                     gpio_buttons[i].repeat_time = current_time + INITIAL_REPEAT_DELAY_MS;
                     
-                    // Fire event immediately for all buttons EXCEPT 'right' and 'left'.
-                    // For those, we wait to see if it's a short or long press.
+                    // Fire event immediately for all buttons EXCEPT 'right', 'left'
+                    // and 'center'. For those, we wait to see if it's a short or
+                    // long press.
                     if (strcmp(gpio_buttons[i].name, "right") != 0 &&
-                        strcmp(gpio_buttons[i].name, "left") != 0) {
+                        strcmp(gpio_buttons[i].name, "left") != 0 &&
+                        strcmp(gpio_buttons[i].name, "center") != 0) {
                         send_button_event(i);
                     }
                 } else { // Button released
                     gpio_buttons[i].is_holding = false;
-                    
-                    // If 'right' or 'left' was released without a long press, send the normal event now.
+
+                    // If 'right'/'left'/'center' was released without a long press, send the normal event now.
                     if ((strcmp(gpio_buttons[i].name, "right") == 0 ||
-                         strcmp(gpio_buttons[i].name, "left") == 0) &&
+                         strcmp(gpio_buttons[i].name, "left") == 0 ||
+                         strcmp(gpio_buttons[i].name, "center") == 0) &&
                         !gpio_buttons[i].long_press_sent) {
                         send_button_event(i);
                     } else {
@@ -423,9 +462,10 @@ void handle_gpio_input(void) {
             if (gpio_buttons[i].is_holding && current_state == 1 && 
                 current_time >= gpio_buttons[i].repeat_time) {
                 
-                // Special long-press handling for 'right' and 'left'
+                // Special long-press handling for 'right', 'left' and 'center'
                 if (strcmp(gpio_buttons[i].name, "right") == 0 ||
-                    strcmp(gpio_buttons[i].name, "left") == 0) {
+                    strcmp(gpio_buttons[i].name, "left") == 0 ||
+                    strcmp(gpio_buttons[i].name, "center") == 0) {
                     if (!gpio_buttons[i].long_press_sent) {
                         send_long_press_event(i);
                         gpio_buttons[i].long_press_sent = true;
@@ -506,6 +546,9 @@ static void handle_char_input(char c) {
         switch(c) {
             case 'w':
             case 'W':
+#ifndef USE_SIMULATOR
+                if (!menu_active) { switch_to_prev_stream(); break; }
+#endif
                 switch (control_mode)
                 {
                 case GSMENU_CONTROL_MODE_NAV:
@@ -528,6 +571,9 @@ static void handle_char_input(char c) {
                 break;
             case 's':
             case 'S':
+#ifndef USE_SIMULATOR
+                if (!menu_active) { switch_to_next_stream(); break; }
+#endif
                 switch (control_mode)
                 {
                 case GSMENU_CONTROL_MODE_SLIDER:
@@ -611,6 +657,19 @@ static void handle_char_input(char c) {
             case 'Q':
                 raise(SIGINT);
                 break;
+            case 'm':
+            case 'M':
+                // Keyboard has no hold-duration concept, so there's no
+                // equivalent to center-long-press otherwise -- this directly
+                // calls what that gesture calls, for testing the menu
+                // open/back/cancel path via keyboard on a dev machine
+                // without needing real GPIO hardware.
+#ifndef USE_SIMULATOR
+                if (!menu_active) toggle_screen();
+                else if (control_mode == GSMENU_CONTROL_MODE_NAV) { next_key = LV_KEY_HOME; next_key_pressed = true; }
+                else { next_key = LV_KEY_ESC; next_key_pressed = true; }
+#endif
+                break;
         }
 }
 
@@ -628,10 +687,12 @@ static void virtual_keyboard_read(lv_indev_t * indev, lv_indev_data_t * data) {
 
         next_key_pressed = !next_key_pressed;  // Toggle state
 
-        if (next_key != LV_KEY_ENTER)
-            toggle_screen();
+        // Menu opening is now exclusively via center-long-press (see
+        // send_long_press_event) -- no more implicit "any non-ENTER key
+        // wakes the menu" side effect, so up/down/left/right are free to
+        // mean something else entirely while the menu is closed.
 
-        if (!next_key_pressed) {  
+        if (!next_key_pressed) {
             next_key = LV_KEY_END;  // Reset key after release event
         }
 

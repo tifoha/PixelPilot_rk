@@ -45,6 +45,21 @@ public:
     int stream_count() const { return (int)streams_.size(); }
     StreamPipeline *stream(int idx) { return streams_.at(idx).get(); }
 
+    // True if the currently active stream hasn't produced a frame recently
+    // (see StreamPipeline::kStaleMs) -- i.e. its source went away. Without
+    // checking this, __DISPLAY_THREAD__ just keeps the video plane showing
+    // whatever frame was last decoded, frozen, forever (nothing ever tells
+    // it otherwise -- there's no "stream ended" event, only an absence of
+    // new frames).
+    bool is_active_stream_stale() const;
+
+    // Lazily creates (or resizes/recreates if w/h changed) a solid black
+    // NV12 dumb buffer sized to match the video plane, for
+    // __DISPLAY_THREAD__ to commit instead of a stale frame. Returns its
+    // fb_id, or 0 if w/h aren't known yet (no stream has decoded a frame
+    // at all yet).
+    uint32_t ensure_no_signal_fb(uint32_t w, uint32_t h);
+
 private:
     int drm_fd_;
     struct modeset_output *output_list_;
@@ -52,4 +67,8 @@ private:
     std::vector<std::unique_ptr<StreamPipeline>> streams_;
     std::atomic<int> active_index_{0};
     bool any_modeset_done_ = false;
+
+    uint32_t no_signal_fb_id_ = 0;
+    uint32_t no_signal_handle_ = 0;
+    uint32_t no_signal_w_ = 0, no_signal_h_ = 0;
 };

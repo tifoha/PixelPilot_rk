@@ -105,6 +105,7 @@ extern bool osd_update_ready;
 extern bool gsmenu_enabled;
 extern int gsmenu_transparency;
 extern int gsmenu_error_timeout_ms;
+void set_no_signal_indicator(bool show); // defined in osd.cpp
 int video_zpos = 1;
 
 void set_mpp_decoding_parameters(MppApi * mpi, MppCtx ctx);
@@ -410,16 +411,28 @@ void *__DISPLAY_THREAD__(void *param)
 	while (!frm_eos) {
 		int fb_id;
 		bool osd_update;
-		
+
 		ret = pthread_mutex_lock(&video_mutex);
 		assert(!ret);
 		while (output_list->video_fb_id==0 && !osd_update_ready) {
-			pthread_cond_wait(&video_cond, &video_mutex);
+			// Timed, not a plain wait: with no --osd, nothing else would
+			// ever wake this loop while the active stream is stale (no
+			// new frames means no signal, ever, until the stream
+			// recovers) -- the staleness check below needs a periodic
+			// wake of its own to ever run.
+			struct timespec ts;
+			clock_gettime(CLOCK_REALTIME, &ts);
+			ts.tv_nsec += 300L * 1000000L;
+			if (ts.tv_nsec >= 1000000000L) { ts.tv_sec += 1; ts.tv_nsec -= 1000000000L; }
+			int wret = pthread_cond_timedwait(&video_cond, &video_mutex, &ts);
 			assert(!ret);
 			if (output_list->video_fb_id == 0 && frm_eos) {
 				ret = pthread_mutex_unlock(&video_mutex);
 				assert(!ret);
 				goto end;
+			}
+			if (wret == ETIMEDOUT && g_stream_manager && g_stream_manager->is_active_stream_stale()) {
+				break; // handle stale-active-stream display below
 			}
 		}
 		fb_id = output_list->video_fb_id;
@@ -430,6 +443,19 @@ void *__DISPLAY_THREAD__(void *param)
 		osd_update_ready = false;
 		ret = pthread_mutex_unlock(&video_mutex);
 		assert(!ret);
+
+		// Multistream switcher only: the active stream's source can go
+		// away (air unit off/out of range) with no event telling us so --
+		// only an absence of new frames. Without this, fb_id stays 0 here
+		// forever (see the loop above) and the video plane's FB_ID
+		// property simply never gets touched again below, so it just
+		// keeps showing whatever frame was already committed, frozen.
+		bool stream_stale = g_stream_manager && g_stream_manager->is_active_stream_stale();
+		if (stream_stale) {
+			fb_id = (int)g_stream_manager->ensure_no_signal_fb(
+				(uint32_t)output_list->video_frm_width, (uint32_t)output_list->video_frm_height);
+		}
+		set_no_signal_indicator(stream_stale);
 
 		// create new video_request
 		drmModeAtomicFree(output_list->video_request);

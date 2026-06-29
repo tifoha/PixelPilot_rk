@@ -13,6 +13,7 @@
  * MSP/Displayport OSD.
  */
 #include <cmath>
+#include <atomic>
 extern "C" {
 #include "drm.h"
 #include "mavlink.h"
@@ -79,6 +80,31 @@ bool gsmenu_enabled = false;
 // transparent.
 int gsmenu_transparency = 0;
 int gsmenu_error_timeout_ms = 4000; // auto-dismiss delay for the error toast; see show_error() in gsmenu/executor.c
+
+// "NO SIGNAL" indicator for the multistream switcher (see
+// StreamManager::is_active_stream_stale() / __DISPLAY_THREAD__ in main.cpp).
+// Lives on lv_layer_top() like the gsmenu error toast -- always visible
+// above whichever screen is active -- but only actually shown while the
+// menu is closed (no_signal_label, lv_layer_top), since "stream gone" isn't
+// relevant while the user is in settings.
+static lv_obj_t * no_signal_label = nullptr;
+std::atomic<bool> g_lvgl_ready{false}; // set true at the end of setup_lvgl(), once lv_init() has actually run
+void set_no_signal_indicator(bool show) {
+    if (!g_lvgl_ready.load()) return;
+    lv_lock();
+    bool show_now = show && !menu_active;
+    if (show_now && !no_signal_label) {
+        no_signal_label = lv_label_create(lv_layer_top());
+        lv_obj_set_style_text_color(no_signal_label, lv_color_white(), LV_PART_MAIN);
+        lv_label_set_text(no_signal_label, "NO SIGNAL");
+        lv_obj_center(no_signal_label);
+    }
+    if (no_signal_label) {
+        if (show_now) lv_obj_remove_flag(no_signal_label, LV_OBJ_FLAG_HIDDEN);
+        else lv_obj_add_flag(no_signal_label, LV_OBJ_FLAG_HIDDEN);
+    }
+    lv_unlock();
+}
 
 OsdGl osd_gl;
 extern bool enable_live_colortrans;
@@ -2062,6 +2088,12 @@ void setup_lvgl(osd_thread_params *p) {
     lv_obj_set_style_bg_opa(lv_screen_active(), LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(lv_layer_bottom(), LV_OPA_TRANSP, LV_PART_MAIN);
 
+    // __DISPLAY_THREAD__ (main.cpp) starts well before this thread reaches
+    // here (tid_display is created before tid_osd) and can call
+    // set_no_signal_indicator() as soon as it detects a stale stream, which
+    // can be on its very first iteration if no stream has decoded a frame
+    // yet -- without this gate, that races lv_init() above and segfaults.
+    g_lvgl_ready.store(true);
 }
 
 void *__OSD_THREAD__(void *param) {

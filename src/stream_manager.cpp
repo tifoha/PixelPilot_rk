@@ -1,5 +1,15 @@
 #include "stream_manager.h"
 
+#include <cstring>
+#include <unistd.h>
+#include <errno.h>
+#include <sys/ioctl.h>
+#include <sys/mman.h>
+
+#include <xf86drm.h>
+#include <xf86drmMode.h>
+#include <drm_fourcc.h>
+
 #include "spdlog/spdlog.h"
 
 // Owned by main.cpp; __DISPLAY_THREAD__ waits on these exactly as it does
@@ -88,4 +98,65 @@ void StreamManager::switch_to_prev() {
     int n = (int)streams_.size();
     if (n < 2) return;
     switch_to((active_index_ + n - 1) % n);
+}
+
+bool StreamManager::is_active_stream_stale() const {
+    if (streams_.empty()) return false;
+    return streams_[active_index_]->latest_fb_id() == 0;
+}
+
+uint32_t StreamManager::ensure_no_signal_fb(uint32_t w, uint32_t h) {
+    if (w == 0 || h == 0) return 0;
+    if (no_signal_fb_id_ != 0 && w == no_signal_w_ && h == no_signal_h_) return no_signal_fb_id_;
+
+    if (no_signal_fb_id_ != 0) {
+        drmModeRmFB(drm_fd_, no_signal_fb_id_);
+        no_signal_fb_id_ = 0;
+    }
+    if (no_signal_handle_ != 0) {
+        struct drm_mode_destroy_dumb dmd = { .handle = no_signal_handle_ };
+        ioctl(drm_fd_, DRM_IOCTL_MODE_DESTROY_DUMB, &dmd);
+        no_signal_handle_ = 0;
+    }
+
+    // NV12: Y plane (w x h, one byte/pixel) followed by interleaved UV
+    // plane (w x h/2, half the rows since chroma is subsampled 2x2).
+    // Y=16/UV=128 is "black" in limited-range YUV (the convention MPP's
+    // decoded frames already use), not Y=0 -- Y=0 reads as crushed/wrong
+    // black on most displays for limited-range content.
+    struct drm_mode_create_dumb dmcd;
+    memset(&dmcd, 0, sizeof(dmcd));
+    dmcd.bpp = 8;
+    dmcd.width = w;
+    dmcd.height = h + h / 2;
+    int ret;
+    do { ret = ioctl(drm_fd_, DRM_IOCTL_MODE_CREATE_DUMB, &dmcd); }
+    while (ret == -1 && (errno == EINTR || errno == EAGAIN));
+    if (ret) { spdlog::error("[switcher] no-signal buffer: create_dumb failed"); return 0; }
+    no_signal_handle_ = dmcd.handle;
+
+    struct drm_mode_map_dumb dmmd;
+    memset(&dmmd, 0, sizeof(dmmd));
+    dmmd.handle = dmcd.handle;
+    ret = ioctl(drm_fd_, DRM_IOCTL_MODE_MAP_DUMB, &dmmd);
+    if (ret) { spdlog::error("[switcher] no-signal buffer: map_dumb failed"); return 0; }
+    void *map = mmap(0, dmcd.size, PROT_READ | PROT_WRITE, MAP_SHARED, drm_fd_, dmmd.offset);
+    if (map == MAP_FAILED) { spdlog::error("[switcher] no-signal buffer: mmap failed"); return 0; }
+    memset(map, 16, (size_t)dmcd.pitch * h);            // Y plane
+    memset((uint8_t*)map + dmcd.pitch * h, 128, (size_t)dmcd.pitch * (h / 2)); // UV plane
+    munmap(map, dmcd.size);
+
+    uint32_t handles[4] = {0}, pitches[4] = {0}, offsets[4] = {0};
+    handles[0] = dmcd.handle;
+    pitches[0] = dmcd.pitch;
+    handles[1] = dmcd.handle;
+    offsets[1] = dmcd.pitch * h;
+    pitches[1] = dmcd.pitch;
+    ret = drmModeAddFB2(drm_fd_, w, h, DRM_FORMAT_NV12, handles, pitches, offsets, &no_signal_fb_id_, 0);
+    if (ret) { spdlog::error("[switcher] no-signal buffer: addfb2 failed"); no_signal_fb_id_ = 0; return 0; }
+
+    no_signal_w_ = w;
+    no_signal_h_ = h;
+    spdlog::info("[switcher] no-signal buffer ready: {}x{} fb_id={}", w, h, no_signal_fb_id_);
+    return no_signal_fb_id_;
 }

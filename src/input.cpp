@@ -265,14 +265,14 @@ static void handle_evdev_input() {
 
 void toggle_screen(void); // defined below; used by send_long_press_event above its definition
 
-// 'center'-long is the one dedicated "open / back / cancel" gesture:
+// 'center'-long is the "open / cancel" gesture:
 //   - menu closed            -> open it
-//   - menu open, browsing    -> LV_KEY_HOME (existing handlers already do
-//                                the right thing here: one level back if
-//                                inside a sub-page, or close the menu
-//                                entirely back to video if already at the
-//                                top -- see helper.c's generic_back_event_handler
-//                                vs ui.c's main-group HOME handler)
+//   - menu open, browsing    -> LV_KEY_HOME (same effect as 'left' in NAV
+//                                mode below -- left is the day-to-day way
+//                                to go back now, this is kept as an
+//                                always-available alternative, and is the
+//                                spot reserved for a future "discard
+//                                changes made on this page" gesture)
 //   - menu open, editing a   -> LV_KEY_ESC (existing per-widget
 //     value (slider/dropdown/   LV_EVENT_CANCEL handlers, e.g.
 //     keyboard)                 slider_event_cb / video_scale_revert_cb,
@@ -300,24 +300,24 @@ void send_long_press_event(size_t button_index) {
 void send_button_event(size_t button_index) {
     if (gpio_buttons[button_index].name == NULL) return;
 
-    // While the menu is closed: 'rec' keeps its own function below; up/down
-    // switch streams (no-ops if the multistream switcher isn't running --
-    // see switch_to_next_stream/switch_to_prev_stream in main.cpp);
-    // left/right are reserved, no function yet. None of these fall through
-    // to the NAV-mode branch below, which only makes sense once the menu is
-    // actually open. Opening the menu itself is exclusively a
+    // While the menu is closed: 'rec' keeps its own function below;
+    // left/right switch streams (no-ops if the multistream switcher isn't
+    // running -- see switch_to_next_stream/switch_to_prev_stream in
+    // main.cpp); up/down are reserved, no function yet. None of these fall
+    // through to the NAV-mode branch below, which only makes sense once the
+    // menu is actually open. Opening the menu itself is exclusively a
     // center-long-press gesture (see send_long_press_event).
     if (!menu_active) {
-        if (strcmp(gpio_buttons[button_index].name, "up") == 0) {
+        if (strcmp(gpio_buttons[button_index].name, "left") == 0) {
             switch_to_prev_stream();
             return;
         }
-        if (strcmp(gpio_buttons[button_index].name, "down") == 0) {
+        if (strcmp(gpio_buttons[button_index].name, "right") == 0) {
             switch_to_next_stream();
             return;
         }
         if (strcmp(gpio_buttons[button_index].name, "rec") != 0) {
-            return; // left/right: reserved, no function yet
+            return; // up/down: reserved, no function yet
         }
         // 'rec' falls through to the NAV-mode switch below.
     }
@@ -325,24 +325,29 @@ void send_button_event(size_t button_index) {
     // Adjust for control_mode
     switch (control_mode) {
         case GSMENU_CONTROL_MODE_NAV:
-            // up/down move through the focus chain; left/right do the same
-            // (one chain, not two independent axes -- LVGL's group focus
-            // order already tends to follow left-to-right within a row, so
-            // this covers "items to the side" without inventing a second
-            // navigation primitive that doesn't exist in this menu's
-            // layout). center-short enters edit mode on the focused item;
-            // right is deliberately NOT also ENTER anymore -- center is
-            // the sole "enter/confirm" gesture now, right is nav-only.
-            if (strcmp(gpio_buttons[button_index].name, "up") == 0 ||
-                strcmp(gpio_buttons[button_index].name, "left") == 0) {
+            // up/down move through the focus chain (the only item-to-item
+            // navigation now -- this menu's layout is a single chain per
+            // page, not a 2D grid, so one axis is enough and frees left/right
+            // for level navigation instead). right and center-short both
+            // enter/select the focused item (a submenu visually appears to
+            // the right of its parent, so right-to-enter reads naturally;
+            // center stays as an equivalent for one-handed use). left goes
+            // back one level (repeatable -- same LV_KEY_HOME handlers used
+            // by center-long, see generic_back_event_handler/ui.c's
+            // main-group HOME handler -- closes the menu entirely once
+            // already at the top level).
+            if (strcmp(gpio_buttons[button_index].name, "up") == 0) {
                 next_key = LV_KEY_PREV;
             }
-            else if (strcmp(gpio_buttons[button_index].name, "down") == 0 ||
-                     strcmp(gpio_buttons[button_index].name, "right") == 0) {
+            else if (strcmp(gpio_buttons[button_index].name, "down") == 0) {
                 next_key = LV_KEY_NEXT;
             }
-            else if (strcmp(gpio_buttons[button_index].name, "center") == 0) {
+            else if (strcmp(gpio_buttons[button_index].name, "right") == 0 ||
+                     strcmp(gpio_buttons[button_index].name, "center") == 0) {
                 next_key = LV_KEY_ENTER;
+            }
+            else if (strcmp(gpio_buttons[button_index].name, "left") == 0) {
+                next_key = LV_KEY_HOME;
             }
             else if (strcmp(gpio_buttons[button_index].name, "rec") == 0) {
                 #ifdef USE_SIMULATOR
@@ -546,9 +551,6 @@ static void handle_char_input(char c) {
         switch(c) {
             case 'w':
             case 'W':
-#ifndef USE_SIMULATOR
-                if (!menu_active) { switch_to_prev_stream(); break; }
-#endif
                 switch (control_mode)
                 {
                 case GSMENU_CONTROL_MODE_NAV:
@@ -571,9 +573,6 @@ static void handle_char_input(char c) {
                 break;
             case 's':
             case 'S':
-#ifndef USE_SIMULATOR
-                if (!menu_active) { switch_to_next_stream(); break; }
-#endif
                 switch (control_mode)
                 {
                 case GSMENU_CONTROL_MODE_SLIDER:
@@ -596,6 +595,9 @@ static void handle_char_input(char c) {
                 break;
             case 'a':
             case 'A':
+#ifndef USE_SIMULATOR
+                if (!menu_active) { switch_to_prev_stream(); break; }
+#endif
                 switch (control_mode)
                 {
                 case GSMENU_CONTROL_MODE_SLIDER:
@@ -617,10 +619,13 @@ static void handle_char_input(char c) {
                 break;
             case 'd':
             case 'D':
+#ifndef USE_SIMULATOR
+                if (!menu_active) { switch_to_next_stream(); break; }
+#endif
                 switch (control_mode)
                 {
                 case GSMENU_CONTROL_MODE_NAV:
-                    next_key = menu_active ? LV_KEY_ENTER : LV_KEY_RIGHT;
+                    next_key = LV_KEY_ENTER;
                     break;
                 case GSMENU_CONTROL_MODE_SLIDER:
                     next_key = LV_KEY_ENTER;
@@ -633,7 +638,7 @@ static void handle_char_input(char c) {
                     break;
                 default:
                     break;
-                }        
+                }
                 next_key_pressed = true;
                 printf("Right\n");
                 break;

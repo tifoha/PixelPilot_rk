@@ -67,5 +67,5 @@ os_sensors:
 # Phone restream target IP (optional)
 # manual_ip: permanently pins this IP in the "Stream To" dropdown so it is
 #   always visible as an option, even when auto-discovery finds no clients.
-# restream:
-#   manual_ip: 192.168.1.100
+restream:
+  manual_ip: 192.168.13.110

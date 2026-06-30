@@ -1442,6 +1442,10 @@ void restream_set_pinned_ip(const char* ip) {
     g_restream_pinned_ip = (ip && ip[0] != '\0') ? ip : "";
 }
 
+void restream_bind_pipeline(GstElement* pipeline) {
+    bind_restream_valve(pipeline);
+}
+
 const char* restream_get_manual_ip() {
     std::lock_guard<std::mutex> lock(g_restream_mutex);
     static char buf[64];

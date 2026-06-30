@@ -11,6 +11,7 @@
 #include <drm_fourcc.h>
 
 #include "spdlog/spdlog.h"
+#include "osd.h"
 
 // Owned by main.cpp; __DISPLAY_THREAD__ waits on these exactly as it does
 // today for the single-stream case -- StreamManager only decides which
@@ -86,6 +87,12 @@ void StreamManager::switch_to(int idx) {
     active_index_ = idx;
     streams_[old_idx]->set_active(false);
     spdlog::info("[switcher] switching stream {} -> {}", old_idx, idx);
+    uint32_t w = streams_[idx]->frame_width();
+    uint32_t h = streams_[idx]->frame_height();
+    if (w && h) {
+        osd_publish_uint_fact("video.width",  NULL, 0, (ulong)w);
+        osd_publish_uint_fact("video.height", NULL, 0, (ulong)h);
+    }
 }
 
 void StreamManager::switch_to_next() {

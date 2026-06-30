@@ -546,9 +546,9 @@ private:
 
 	void assertType(Type t) const {
 		if (t != type) {
-			spdlog::error("'{}': requested type of {}, but the actual type is {}",
-						  asVerboseString(), typeName(t), typeName(type));
-			assert(type == t);
+			throw std::runtime_error(
+				std::string("'") + asVerboseString() + "': requested type of " +
+				typeName(t) + ", but the actual type is " + typeName(type));
 		}
 	}
 	FactMeta meta;
@@ -1419,6 +1419,7 @@ public:
 	}
 };
 
+
 /**
  * Widget that shows approximate voltage of a battery cell.
  * If the number of cells is 0, it estimates it from the pack voltage based on max_voltage_mv;
@@ -1443,7 +1444,7 @@ public:
     virtual void setFact(uint idx, Fact fact) {
         assert(idx == 0);
         // replace the pack value with per-cell value
-        long voltage_mv = fact.getIntValue();
+        long voltage_mv = (long)fact;
         int cells;
         if (num_cells > 0) {
             cells = num_cells;
@@ -1465,6 +1466,7 @@ public:
     virtual void draw(cairo_t *cr) {
         auto [x, y] = xy(cr);
         const Fact& fact = args[0];
+        if (!fact.isDefined()) return;
         auto cell_voltage = fact.getDoubleValue();
         auto cell_voltage_mv = cell_voltage * 1000;
 
@@ -1887,8 +1889,13 @@ public:
 	};
 
 	void draw(cairo_t *cr) {
-		for(auto &widget : widgets)
-			widget->draw(cr);
+		for(auto &widget : widgets) {
+			try {
+				widget->draw(cr);
+			} catch (const std::exception& e) {
+				spdlog::warn("OSD widget draw error: {}", e.what());
+			}
+		}
 	};
 
 	void setFact(Fact fact) {
@@ -1897,8 +1904,8 @@ public:
 				try {
 					Fact converted_fact = matcher.convert(fact);
 					widget->setFact(arg_idx, converted_fact);
-				} catch (const ExpressionException& e) {
-					spdlog::error("Failed to evaluate 'convert' expression for {}: {}",
+				} catch (const std::exception& e) {
+					spdlog::error("Failed to set fact {}: {}",
 								  fact.asVerboseString(), e.what());
 				}
 			}

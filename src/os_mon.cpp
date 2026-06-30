@@ -378,6 +378,32 @@ private:
 };
 
 
+class MemorySensor : public ISensor {
+public:
+    void run() override {
+        std::ifstream f("/proc/meminfo");
+        if (!f.is_open()) return;
+        long total = 0, available = 0;
+        std::string key;
+        long val;
+        std::string unit;
+        while (f >> key >> val) {
+            std::getline(f, unit);
+            if (key == "MemTotal:")    total     = val;
+            if (key == "MemAvailable:") available = val;
+            if (total && available) break;
+        }
+        if (!total) return;
+        long used_pct = (total - available) * 100 / total;
+        osd_publish_uint_fact("os_mon.mem.used_pct", NULL, 0, (ulong)used_pct);
+    }
+    bool is_valid() override { return true; }
+};
+
+void OsSensors::addMemory() {
+    sensors.push_back(std::make_shared<MemorySensor>());
+}
+
 void OsSensors::addCPU() {
     sensors.push_back(std::make_shared<CPUSensor>());
 }
@@ -409,7 +435,8 @@ std::size_t OsSensors::discoverTemperature() {
 }
 
 std::size_t OsSensors::autodiscover() {
-	return discoverCPU() + discoverPower() + discoverTemperature();
+	sensors.push_back(std::make_shared<MemorySensor>());
+	return 1 + discoverCPU() + discoverPower() + discoverTemperature();
 }
 
 void OsSensors::run() {

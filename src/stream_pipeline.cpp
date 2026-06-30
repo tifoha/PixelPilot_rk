@@ -12,6 +12,7 @@
 #include <drm_fourcc.h>
 
 #include "spdlog/spdlog.h"
+#include "osd.h"
 
 // time_util.h's get_time_ms() is defined directly in the header (not
 // inline), so it can only be included from one translation unit -- main.cpp
@@ -107,14 +108,28 @@ void StreamPipeline::start_gst() {
     const char *enc_name = (codec_ == VideoCodec::H264) ? "H264" : "H265";
     const char *caps_fmt = (codec_ == VideoCodec::H264) ? "h264" : "h265";
 
-    char pipeline_str[512];
-    snprintf(pipeline_str, sizeof(pipeline_str),
-        "udpsrc port=%d caps=\"application/x-rtp, media=(string)video, "
-        "encoding-name=(string)%s, clock-rate=(int)90000\" ! "
-        "%s ! %s config-interval=-1 ! "
-        "video/x-%s,stream-format=byte-stream,alignment=au ! "
-        "appsink drop=true sync=false name=out_appsink",
-        udp_port_, enc_name, depay, parse, caps_fmt);
+    char pipeline_str[768];
+    if (index_ == 0) {
+        snprintf(pipeline_str, sizeof(pipeline_str),
+            "udpsrc port=%d caps=\"application/x-rtp, media=(string)video, "
+            "encoding-name=(string)%s, clock-rate=(int)90000\" ! "
+            "tee name=rtp_tee "
+            "rtp_tee. ! %s ! %s config-interval=-1 ! "
+            "video/x-%s,stream-format=byte-stream,alignment=au ! "
+            "appsink drop=true sync=false name=out_appsink "
+            "rtp_tee. ! valve name=restream_valve drop=true"
+            " ! queue leaky=downstream max-size-buffers=0 max-size-bytes=0 max-size-time=1000000000 silent=true"
+            " ! udpsink name=restream_sink host=0.0.0.0 port=5600 sync=false async=false qos=false",
+            udp_port_, enc_name, depay, parse, caps_fmt);
+    } else {
+        snprintf(pipeline_str, sizeof(pipeline_str),
+            "udpsrc port=%d caps=\"application/x-rtp, media=(string)video, "
+            "encoding-name=(string)%s, clock-rate=(int)90000\" ! "
+            "%s ! %s config-interval=-1 ! "
+            "video/x-%s,stream-format=byte-stream,alignment=au ! "
+            "appsink drop=true sync=false name=out_appsink",
+            udp_port_, enc_name, depay, parse, caps_fmt);
+    }
 
     spdlog::info("[stream {}] pipeline: {}", index_, pipeline_str);
     GError *error = nullptr;
@@ -128,6 +143,9 @@ void StreamPipeline::start_gst() {
     }
     appsink_ = gst_bin_get_by_name(GST_BIN(pipeline_), "out_appsink");
     assert(appsink_);
+    if (index_ == 0) {
+        restream_bind_pipeline(pipeline_);
+    }
     GstStateChangeReturn sret = gst_element_set_state(pipeline_, GST_STATE_PLAYING);
     if (sret == GST_STATE_CHANGE_FAILURE) {
         spdlog::error("[stream {}] failed to set pipeline to PLAYING", index_);
@@ -170,6 +188,8 @@ void StreamPipeline::gst_pull_loop() {
                     first_sample_seen_ = true;
                     spdlog::info("[stream {}] first appsink sample: {} bytes", index_, map.size);
                 }
+                if (active_.load())
+                    osd_publish_uint_fact("gstreamer.received_bytes", NULL, 0, (ulong)map.size);
                 feed_packet(map.data, (int)map.size);
                 gst_buffer_unmap(buf, &map);
             }
@@ -263,6 +283,10 @@ void StreamPipeline::init_buffers(MppFrame frame) {
 
     spdlog::info("[stream {}] frame info changed {}x{} (stride {}x{})",
                  index_, frm_width_, frm_height_, hor_stride, ver_stride);
+    if (active_.load()) {
+        osd_publish_uint_fact("video.width",  NULL, 0, (ulong)frm_width_);
+        osd_publish_uint_fact("video.height", NULL, 0, (ulong)frm_height_);
+    }
 
     free_drm_buffers();
 

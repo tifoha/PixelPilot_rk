@@ -23,6 +23,8 @@ public:
     // Adds temperature sensor
     void addTemperature(const std::string &thermal_zone);
     std::size_t discoverTemperature();
+    // Adds memory usage sensor (always available)
+    void addMemory();
     // Automatically detects and adds all CPU, power and temperature sensors; returns the number
     // of discovered sensors
     std::size_t autodiscover();

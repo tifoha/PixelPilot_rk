@@ -1175,6 +1175,8 @@ void printHelp() {
     "\n"
     "    --disable-gregidr      - Disable last-hop probing and IDR requests\n"
     "\n"
+    "    --restream-ip <ip>     - Auto-start restream to this IP on launch\n"
+    "\n"
     "    --live-colortrans      - Apply colortrans LUT to live display via DRM gamma\n"	
     "\n"
     "    --screen-mode-list     - Print the list of supported screen modes and exit.\n"
@@ -1241,6 +1243,8 @@ int main(int argc, char **argv)
 	struct StreamArg { int port; VideoCodec stream_codec; };
 	std::vector<StreamArg> stream_args;
 	std::unique_ptr<StreamManager> stream_manager;
+
+	std::string restream_ip_arg;
 
 	// Load console arguments
 	__BeginParseConsoleArguments__(printHelp) 
@@ -1525,6 +1529,11 @@ int main(int argc, char **argv)
     	continue;
 	}
 
+	__OnArgument("--restream-ip") {
+		restream_ip_arg = std::string(__ArgValue);
+		continue;
+	}
+
 	__EndParseConsoleArguments__
 
 	// Resolve any --stream entries that omitted :codec against --codec's
@@ -1652,6 +1661,12 @@ int main(int argc, char **argv)
 			restream_set_pinned_ip(ip.c_str());
 		}
 
+		if (!restream_ip_arg.empty()) {
+			restream_set_pinned_ip(restream_ip_arg.c_str());
+			restream_set_manual_ip(restream_ip_arg.c_str());
+			restream_set_enabled(true);
+		}
+
 		if (config["os_sensors"] && config["os_sensors"].IsMap()) {
 			if (config["os_sensors"]["cpu"]) {
 				auto cpu = config["os_sensors"]["cpu"];
@@ -1687,6 +1702,7 @@ int main(int argc, char **argv)
 		} else {
 			spdlog::error("Unexpected format of config file 'os_sensors'!");
 		}
+		os_sensors.addMemory();
 
 	} catch (const YAML::BadFile& e) {
 		std::cout << "Configuration file " << config_file_path << " not found." << std::endl;

@@ -21,6 +21,8 @@
 #include <sys/prctl.h>
 #include <sys/sem.h>
 
+#include <math.h>
+
 #include "mavlink/common/mavlink.h"
 #include "mavlink.h"
 #include "osd.h"
@@ -81,6 +83,18 @@ char* insertString(char s1[], const char s2[], size_t pos) {
 
 int mavlink_port = 14550;
 int mavlink_thread_signal = 0;
+
+static double g_home_lat = 0.0, g_home_lon = 0.0;
+static int g_home_valid = 0;
+static long g_heading_deg = 0;
+
+static double calc_bearing(double lat1, double lon1, double lat2, double lon2) {
+    double rlat1 = deg2rad(lat1), rlat2 = deg2rad(lat2);
+    double dlon  = deg2rad(lon2 - lon1);
+    double y = sin(dlon) * cos(rlat2);
+    double x = cos(rlat1) * sin(rlat2) - sin(rlat1) * cos(rlat2) * cos(dlon);
+    return fmod(atan2(y, x) * 180.0 / M_PI + 360.0, 360.0);
+}
 
 void* __MAVLINK_THREAD__(void* arg) {
   pthread_setname_np(pthread_self(), "__MAVLINK");
@@ -243,6 +257,7 @@ void* __MAVLINK_THREAD__(void* arg) {
               osd_add_int_fact(batch, "mavlink.vfr_hud.heading", tags, 2, (long) vfr.heading);
               osd_add_uint_fact(batch, "mavlink.vfr_hud.throttle", tags, 2, (ulong) vfr.throttle);
               osd_publish_batch(batch);
+              g_heading_deg = (long)vfr.heading;
             }
             break;
 
@@ -260,6 +275,13 @@ void* __MAVLINK_THREAD__(void* arg) {
               osd_add_int_fact(batch, "mavlink.global_position_int.vz", tags, 2, (long) global_position_int.vz); //cm/s
               osd_add_uint_fact(batch, "mavlink.global_position_int.hdg", tags, 2, (ulong) global_position_int.hdg); //cdeg
               osd_publish_batch(batch);
+              if (g_home_valid) {
+                  double cur_lat = global_position_int.lat / 1e7;
+                  double cur_lon = global_position_int.lon / 1e7;
+                  double abs_b = calc_bearing(cur_lat, cur_lon, g_home_lat, g_home_lon);
+                  ulong rel_b = (ulong)(((long)abs_b - g_heading_deg + 360) % 360);
+                  osd_publish_uint_fact("mavlink.home.bearing_relative", NULL, 0, rel_b);
+              }
             }
             break;
 
@@ -302,6 +324,16 @@ void* __MAVLINK_THREAD__(void* arg) {
                 if ((message.sysid != 3) || (message.compid != 68)) {
                     break;
                 }
+            }
+            break;
+
+          case MAVLINK_MSG_ID_HOME_POSITION:
+            {
+              mavlink_home_position_t home;
+              mavlink_msg_home_position_decode(&message, &home);
+              g_home_lat = home.latitude / 1e7;
+              g_home_lon = home.longitude / 1e7;
+              g_home_valid = 1;
             }
             break;
 

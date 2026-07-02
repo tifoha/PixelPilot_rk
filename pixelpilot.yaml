@@ -5,35 +5,25 @@ gsmenu:
   # How long the error toast (bottom-right, non-modal) stays before auto-dismissing, in ms. Default 4000.
   error_timeout_ms: 5000
   gpio:
-    # RuncamVRX
-    left: 13
-    right: 38
-    up: 16
-    down: 18
-    center: 11
-    # alternative
-    # center:
-    #   chip: gpiochip3
-    #   pin: 1
-    rec: 32
-    # Ruby
-    # left: 13
-    # right: 11
-    # up: 16
-    # down: 18
-    # rec: 32
-    # Bonnet
-    # left: 13
-    # right: 12
-    # up: 16
-    # down: 18
-    # center: 11
-    # rec: 22
-    # Emax Wyvern Link Goggle VRX
-    # left: 38
-    # right: 32
-    # up: 16
-    # down: 18
+    # 5-pos joystick + buttons on OP5+ 40-pin header (gpiod character device numbering)
+    up:
+      chip: gpiochip1
+      pin: 15      # physical pin 27 = GPIO1_B7
+    down:
+      chip: gpiochip1
+      pin: 7       # physical pin 13 = GPIO1_A7
+    left:
+      chip: gpiochip1
+      pin: 8       # physical pin 15 = GPIO1_B0
+    right:
+      chip: gpiochip3
+      pin: 13      # physical pin 16 = GPIO3_B5
+    center:
+      chip: gpiochip1
+      pin: 14      # physical pin 28 = GPIO1_B6
+    rec:
+      chip: gpiochip1
+      pin: 31      # physical pin 29 = GPIO1_D7
   # Define custom actions here
   # action is the command the button will trigger
   # actions:

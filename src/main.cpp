@@ -130,6 +130,7 @@ UdpRestream *display_restream = nullptr;
 MppEncoderParams reenc_params;
 DvrMode dvr_mode = DVR_MODE_RAW;
 bool dvr_osd   = false;
+bool restream_display_osd = false;
 static int video_framerate = -1;
 static bool dvr_filenames_with_sequence = false;
 static int mp4_fragmentation_mode = 0;
@@ -1165,6 +1166,8 @@ void printHelp() {
     "\n"
     "    --dvr-osd              - Blend the OSD into the DVR recording\n"
     "\n"
+    "    --restream-display-osd - Burn OSD into the display restream (--restream display:...)\n"
+    "\n"
     "    --screen-mode <mode>   - Override default screen mode. <width>x<heigth>@<fps> ex: 1920x1080@120\n"
     "\n"
     "    --video-plane-id       - Override default drm plane used for video by plane-id\n"
@@ -1398,6 +1401,11 @@ int main(int argc, char **argv)
 
 	__OnArgument("--dvr-osd") {
 		dvr_osd = true;
+		continue;
+	}
+
+	__OnArgument("--restream-display-osd") {
+		restream_display_osd = true;
 		continue;
 	}
 

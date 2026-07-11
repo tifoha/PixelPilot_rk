@@ -50,6 +50,8 @@ void StreamPipeline::stop() {
     if (packet_) { mpp_packet_deinit(&packet_); packet_ = nullptr; }
     if (nal_buffer_) { free(nal_buffer_); nal_buffer_ = nullptr; }
     if (ctx_) { mpp_destroy(ctx_); ctx_ = nullptr; }
+    if (restream_.valve) { gst_object_unref(restream_.valve); restream_.valve = nullptr; }
+    if (restream_.sink)  { gst_object_unref(restream_.sink);  restream_.sink  = nullptr; }
     if (pipeline_) { gst_object_unref(pipeline_); pipeline_ = nullptr; }
 }
 
@@ -101,35 +103,31 @@ void StreamPipeline::set_mpp_decoding_parameters() {
     mpi_->control(ctx_, MPP_DEC_SET_ENABLE_FAST_PLAY, &on);
 }
 
-// ── GStreamer setup -- minimal RTP-in pipeline, no restream/IDR/liveness ────
+// ── GStreamer setup -- minimal RTP-in pipeline with per-stream restream tee ──
 void StreamPipeline::start_gst() {
     const char *depay = (codec_ == VideoCodec::H264) ? "rtph264depay" : "rtph265depay";
     const char *parse = (codec_ == VideoCodec::H264) ? "h264parse" : "h265parse";
     const char *enc_name = (codec_ == VideoCodec::H264) ? "H264" : "H265";
     const char *caps_fmt = (codec_ == VideoCodec::H264) ? "h264" : "h265";
+    int rport = (restream_.port > 0) ? restream_.port : (5600 + index_);
+    // Use the configured IP if known at build time; otherwise 0.0.0.0 (valve stays closed).
+    const char *rhost = restream_.ip.empty() ? "0.0.0.0" : restream_.ip.c_str();
 
-    char pipeline_str[768];
-    if (index_ == 0) {
-        snprintf(pipeline_str, sizeof(pipeline_str),
-            "udpsrc port=%d caps=\"application/x-rtp, media=(string)video, "
-            "encoding-name=(string)%s, clock-rate=(int)90000\" ! "
-            "tee name=rtp_tee "
-            "rtp_tee. ! %s ! %s config-interval=-1 ! "
-            "video/x-%s,stream-format=byte-stream,alignment=au ! "
-            "appsink drop=true sync=false name=out_appsink "
-            "rtp_tee. ! valve name=restream_valve drop=true"
-            " ! queue leaky=downstream max-size-buffers=0 max-size-bytes=0 max-size-time=1000000000 silent=true"
-            " ! udpsink name=restream_sink host=0.0.0.0 port=5600 sync=false async=false qos=false",
-            udp_port_, enc_name, depay, parse, caps_fmt);
-    } else {
-        snprintf(pipeline_str, sizeof(pipeline_str),
-            "udpsrc port=%d caps=\"application/x-rtp, media=(string)video, "
-            "encoding-name=(string)%s, clock-rate=(int)90000\" ! "
-            "%s ! %s config-interval=-1 ! "
-            "video/x-%s,stream-format=byte-stream,alignment=au ! "
-            "appsink drop=true sync=false name=out_appsink",
-            udp_port_, enc_name, depay, parse, caps_fmt);
-    }
+    // Tee is placed after depay+parse so the restream branch sends raw
+    // H.265/H.264 byte-stream (no RTP wrapper), compatible with QGC's
+    // "UDP H.265/H.264 Video Stream" mode.
+    char pipeline_str[1024];
+    snprintf(pipeline_str, sizeof(pipeline_str),
+        "udpsrc port=%d caps=\"application/x-rtp, media=(string)video, "
+        "encoding-name=(string)%s, clock-rate=(int)90000\" ! "
+        "%s ! %s config-interval=-1 ! "
+        "tee name=bs_tee "
+        "bs_tee. ! video/x-%s,stream-format=byte-stream,alignment=au ! "
+        "appsink drop=true sync=false name=out_appsink "
+        "bs_tee. ! valve name=restream_valve drop=true"
+        " ! queue leaky=downstream max-size-buffers=0 max-size-bytes=0 max-size-time=1000000000 silent=true"
+        " ! udpsink name=restream_sink host=%s port=%d sync=false async=false qos=false",
+        udp_port_, enc_name, depay, parse, caps_fmt, rhost, rport);
 
     spdlog::info("[stream {}] pipeline: {}", index_, pipeline_str);
     GError *error = nullptr;
@@ -143,14 +141,30 @@ void StreamPipeline::start_gst() {
     }
     appsink_ = gst_bin_get_by_name(GST_BIN(pipeline_), "out_appsink");
     assert(appsink_);
-    if (index_ == 0) {
-        restream_bind_pipeline(pipeline_);
-    }
+
     GstStateChangeReturn sret = gst_element_set_state(pipeline_, GST_STATE_PLAYING);
     if (sret == GST_STATE_CHANGE_FAILURE) {
         spdlog::error("[stream {}] failed to set pipeline to PLAYING", index_);
     }
+
+    restream_.valve = gst_bin_get_by_name(GST_BIN(pipeline_), "restream_valve");
+    restream_.sink  = gst_bin_get_by_name(GST_BIN(pipeline_), "restream_sink");
+    if (!restream_.ip.empty() && restream_.valve) {
+        g_object_set(restream_.valve, "drop", FALSE, nullptr);
+        spdlog::info("[stream {}] restream → {}:{}", index_, restream_.ip, rport);
+    }
+
     spdlog::info("[stream {}] listening on udp:{} ({})", index_, udp_port_, enc_name);
+}
+
+void StreamPipeline::restream_configure(const std::string& ip, int port) {
+    restream_.ip   = ip;
+    restream_.port = port;
+}
+
+void StreamPipeline::restream_close_valve() {
+    if (restream_.valve)
+        g_object_set(restream_.valve, "drop", TRUE, nullptr);
 }
 
 void StreamPipeline::check_bus_errors() {
@@ -254,6 +268,10 @@ void StreamPipeline::decode_loop() {
                     latest_update_ms_.store(get_time_ms());
                     if (active_.load() && on_active_frame_) {
                         on_active_frame_(fb_id, pts);
+                    }
+                    if (active_.load() && on_raw_frame_) {
+                        MppFrameFormat fmt = mpp_frame_get_fmt(frame);
+                        on_raw_frame_(buffer, frm_width_, frm_height_, hor_stride_, ver_stride_, fmt);
                     }
                     if (++decoded_count_ % 150 == 0)
                         spdlog::debug("[stream {}] decoded {} frames so far (active={})",

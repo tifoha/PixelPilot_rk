@@ -128,8 +128,8 @@ void FrameProcessor::process_loop() {
         }
         if (!fresh.buffer) continue;
 
-        // If DVR is not active, just drain the frame to release the decoder ref.
-        if (!dvr_enabled || !encoder) {
+        // Encode when DVR is recording or display restream is active; otherwise drain.
+        if (!encoder || (!dvr_enabled && !always_encode_.load(std::memory_order_relaxed))) {
             fresh.release();
             continue;
         }
@@ -323,7 +323,7 @@ void FrameProcessor::timer_loop() {
         }
         clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &next, nullptr);
         if (!running) break;
-        if (!dvr_enabled || !encoder) continue;
+        if (!encoder || (!dvr_enabled && !always_encode_.load(std::memory_order_relaxed))) continue;
 
         // Pick the latest processed frame.  If no fresh frame is ready,
         // wait up to half an interval for the processor to finish — this

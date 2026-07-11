@@ -19,6 +19,7 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <string>
 #include <thread>
 
 #include <gst/gst.h>
@@ -56,6 +57,13 @@ public:
     using ActiveFrameCb = std::function<void(uint32_t fb_id, uint64_t pts)>;
     void set_active_frame_cb(ActiveFrameCb cb) { on_active_frame_ = std::move(cb); }
 
+    // Delivers raw decoded frame data from the active stream to whoever needs
+    // it (e.g. FrameProcessor for display restream / DVR re-encode). Called
+    // from decode_loop() only when is_active() is true.
+    using RawFrameCb = std::function<void(MppBuffer, uint32_t w, uint32_t h,
+                                          uint32_t hs, uint32_t vs, MppFrameFormat)>;
+    void set_raw_frame_cb(RawFrameCb cb) { on_raw_frame_ = std::move(cb); }
+
     // Latest decoded frame, read by the switcher/display path. fb_id==0
     // means nothing decoded yet (or stream gone stale -- see kStaleMs).
     uint32_t latest_fb_id() const;
@@ -69,6 +77,11 @@ public:
     // an alink-based request to the air unit. Not wired to anything live.
     void request_idr(const char *reason);
 
+    // Configure RTP restream target. Call before start(). ip="" disables.
+    // Default port for the pipeline is 5600+index if not configured.
+    void restream_configure(const std::string& ip, int port);
+    void restream_close_valve();
+
 private:
     void start_mpp();
     void start_gst();
@@ -80,11 +93,19 @@ private:
     void free_drm_buffers();
     void set_mpp_decoding_parameters();
 
+    struct RestreamState {
+        GstElement *valve = nullptr;
+        GstElement *sink  = nullptr;
+        std::string ip;   // empty = disabled
+        int port = 0;     // 0 = use default (5600 + index_)
+    };
+
     int index_;
     int udp_port_;
     VideoCodec codec_;
     int drm_fd_;
     struct modeset_output *output_list_;
+    RestreamState restream_;
 
     GstElement *pipeline_ = nullptr;
     GstElement *appsink_ = nullptr;
@@ -109,6 +130,7 @@ private:
     std::thread decode_thread_;
     std::thread gst_thread_;
     ActiveFrameCb on_active_frame_;
+    RawFrameCb on_raw_frame_;
 
     bool first_sample_seen_ = false;
     bool first_feed_ok_logged_ = false;

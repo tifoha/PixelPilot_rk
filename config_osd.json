@@ -139,7 +139,7 @@
             "facts": [{"name": "mavlink.sys_status.voltage_battery"}]
         },
 
-        {"name": "bg_bottomright", "type": "BoxWidget", "x": -310, "y": -135, "width": 310, "height": 135,
+        {"name": "bg_bottomright", "type": "BoxWidget", "x": -210, "y": -135, "width": 210, "height": 135,
             "color": {"r": 0.0, "g": 0.0, "b": 0.0, "alpha": 0.4}, "facts": []},
 
         {"name": "Home arrow", "type": "IconSelectorWidget", "x": -305, "y": -130,
@@ -157,17 +157,17 @@
             ]
         },
 
-        {"name": "Home label", "type": "TplTextWidget", "x": -258, "y": -110,
+        {"name": "Home label", "type": "TplTextWidget", "x": -158, "y": -110,
             "template": "HOME",
             "facts": []
         },
 
-        {"name": "Heading", "type": "TplTextWidget", "x": -305, "y": -85,
+        {"name": "Heading", "type": "TplTextWidget", "x": -205, "y": -85,
             "template": "HDG: %d°",
             "facts": [{"name": "mavlink.vfr_hud.heading"}]
         },
 
-        {"name": "GPS sats fix", "type": "TplTextWidget", "x": -305, "y": -55,
+        {"name": "GPS sats fix", "type": "TplTextWidget", "x": -205, "y": -55,
             "template": "GPS: %u sats (%u)",
             "facts": [
                 {"name": "mavlink.gps_raw.satellites_visible"},
@@ -175,12 +175,12 @@
             ]
         },
 
-        {"name": "GPS lat", "type": "TplTextWidget", "x": -305, "y": -33,
+        {"name": "GPS lat", "type": "TplTextWidget", "x": -205, "y": -33,
             "template": "LAT: %.7f",
             "facts": [{"name": "mavlink.global_position_int.lat", "convert": "x / 10000000.0"}]
         },
 
-        {"name": "GPS lon", "type": "TplTextWidget", "x": -305, "y": -11,
+        {"name": "GPS lon", "type": "TplTextWidget", "x": -205, "y": -11,
             "template": "LON: %.7f",
             "facts": [{"name": "mavlink.global_position_int.lon", "convert": "x / 10000000.0"}]
         },

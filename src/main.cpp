@@ -57,6 +57,7 @@ extern "C" {
 #include "frame_processor.h"
 #include "gstrtpreceiver.h"
 #include "stream_manager.h"
+#include "udp_restream.h"
 #include "scheduling_helper.hpp"
 #include "time_util.h"
 #include "os_mon.hpp"
@@ -125,6 +126,7 @@ char* dvr_template = NULL;
 Dvr *dvr_raw = NULL;
 Dvr *dvr_reenc_inst = NULL;
 MppEncoder *reencoder = NULL;
+UdpRestream *display_restream = nullptr;
 MppEncoderParams reenc_params;
 DvrMode dvr_mode = DVR_MODE_RAW;
 bool dvr_osd   = false;
@@ -1175,7 +1177,12 @@ void printHelp() {
     "\n"
     "    --disable-gregidr      - Disable last-hop probing and IDR requests\n"
     "\n"
-    "    --restream-ip <ip>     - Auto-start restream to this IP on launch\n"
+    "    --restream-ip <ip>     - Auto-start restream to this IP on launch (stream 0, port 5600)\n"
+    "\n"
+    "    --restream <spec>      - Restream a stream or display. spec: <index>:<ip>[:<port>]\n"
+    "                             index 0,1,...: raw RTP passthrough (default port 5600+index)\n"
+    "                             index 'display' or '-1': re-encoded with OSD (default port 5609)\n"
+    "                             Repeatable. Example: --restream 0:192.168.1.10 --restream display:192.168.1.10:5609\n"
     "\n"
     "    --live-colortrans      - Apply colortrans LUT to live display via DRM gamma\n"	
     "\n"
@@ -1243,6 +1250,10 @@ int main(int argc, char **argv)
 	struct StreamArg { int port; VideoCodec stream_codec; };
 	std::vector<StreamArg> stream_args;
 	std::unique_ptr<StreamManager> stream_manager;
+
+	// --restream <index>:<ip>[:<port>]  index=-1 means display restream
+	struct RestreamSpec { int index; std::string ip; int port; };
+	std::vector<RestreamSpec> restream_specs;
 
 	std::string restream_ip_arg;
 
@@ -1534,6 +1545,51 @@ int main(int argc, char **argv)
 		continue;
 	}
 
+	// --restream <index>:<ip>[:<port>]
+	// index: 0,1,... for raw RTP passthrough; "display" or "-1" for OSD re-encode
+	// port defaults: 5600+index for streams, 5609 for display
+	__OnArgument("--restream") {
+		const char *arg = __ArgValue;
+		char buf[128];
+		if (strlen(arg) >= sizeof(buf)) {
+			fprintf(stderr, "--restream argument too long: %s\n", arg);
+			return -1;
+		}
+		strcpy(buf, arg);
+		// parse index part
+		char *colon1 = strchr(buf, ':');
+		if (!colon1) {
+			fprintf(stderr, "--restream requires <index>:<ip>[:<port>], got: %s\n", arg);
+			return -1;
+		}
+		*colon1 = '\0';
+		int ridx;
+		if (strcmp(buf, "display") == 0 || strcmp(buf, "-1") == 0) {
+			ridx = -1;
+		} else {
+			ridx = atoi(buf);
+			if (ridx < 0) {
+				fprintf(stderr, "--restream invalid index: %s\n", arg);
+				return -1;
+			}
+		}
+		// parse ip and optional port
+		char *ip_start = colon1 + 1;
+		char *colon2 = strrchr(ip_start, ':');
+		int rport = 0;
+		if (colon2 && colon2 != ip_start) {
+			*colon2 = '\0';
+			rport = atoi(colon2 + 1);
+		}
+		if (*ip_start == '\0') {
+			fprintf(stderr, "--restream missing ip in: %s\n", arg);
+			return -1;
+		}
+		if (rport == 0) rport = (ridx >= 0) ? (5600 + ridx) : 5609;
+		restream_specs.push_back({ridx, std::string(ip_start), rport});
+		continue;
+	}
+
 	__EndParseConsoleArguments__
 
 	// Resolve any --stream entries that omitted :codec against --codec's
@@ -1795,11 +1851,34 @@ int main(int argc, char **argv)
 	ret = pthread_cond_init(&video_cond, NULL);
 	assert(!ret);
 
+	// Create display restream sink if --restream display:<ip>[:<port>] was given
+	for (auto &rs : restream_specs) {
+		if (rs.index == -1) {
+			display_restream = new UdpRestream();
+			if (!display_restream->init(rs.ip, rs.port, reenc_params.codec)) {
+				spdlog::error("display restream init failed, disabling");
+				delete display_restream;
+				display_restream = nullptr;
+			}
+			break;
+		}
+	}
+
+	// Display-only restream: use stream-friendly defaults so IDR frames fit in
+	// a single UDP datagram.  User can override with --dvr-reenc-bitrate/resolution.
+	if (display_restream && !dvr_template) {
+		if (reenc_params.bitrate_kbps == 8000)
+			reenc_params.bitrate_kbps = 1500;
+		if (reenc_params.resolution == EncResolution::Res1080p)
+			reenc_params.resolution = EncResolution::Res720p;
+	}
+
 	pthread_t tid_frame, tid_display, tid_osd, tid_mavlink, tid_wfbcli;
-	if (dvr_template != NULL) {
-		bool has_raw   = (dvr_mode == DVR_MODE_RAW || dvr_mode == DVR_MODE_BOTH);
-		bool has_reenc = (dvr_mode == DVR_MODE_REENCODE || dvr_mode == DVR_MODE_BOTH);
-		bool both      = (dvr_mode == DVR_MODE_BOTH);
+	if (dvr_template != NULL || display_restream != nullptr) {
+		bool has_raw   = dvr_template && (dvr_mode == DVR_MODE_RAW || dvr_mode == DVR_MODE_BOTH);
+		bool has_reenc = (dvr_template && (dvr_mode == DVR_MODE_REENCODE || dvr_mode == DVR_MODE_BOTH))
+		                 || display_restream != nullptr;
+		bool both      = dvr_template && (dvr_mode == DVR_MODE_BOTH);
 
 		if (has_raw) {
 			dvr_thread_params args;
@@ -1818,29 +1897,35 @@ int main(int argc, char **argv)
 		}
 
 		if (has_reenc) {
-			dvr_thread_params args;
-			char *tpl = both ? dvr_template_with_suffix(dvr_template, "_reenc") : dvr_template;
-			args.filename_template = tpl;
-			args.mp4_fragmentation_mode = mp4_fragmentation_mode;
-			args.dvr_filenames_with_sequence = dvr_filenames_with_sequence;
-			args.video_framerate = reenc_params.fps;
-			args.max_file_size = dvr_max_file_size;
-			uint32_t rw, rh; reenc_target_dims(rw, rh);
-			args.video_p.video_frm_width = rw;
-			args.video_p.video_frm_height = rh;
-			args.video_p.codec = reenc_params.codec;
-			dvr_reenc_inst = new Dvr(args);
-			ret = pthread_create(&g_tid_dvr_reenc, NULL, &Dvr::__THREAD__, dvr_reenc_inst);
-			assert(!ret);
+			if (dvr_template) {
+				dvr_thread_params args;
+				char *tpl = both ? dvr_template_with_suffix(dvr_template, "_reenc") : dvr_template;
+				args.filename_template = tpl;
+				args.mp4_fragmentation_mode = mp4_fragmentation_mode;
+				args.dvr_filenames_with_sequence = dvr_filenames_with_sequence;
+				args.video_framerate = reenc_params.fps;
+				args.max_file_size = dvr_max_file_size;
+				uint32_t rw, rh; reenc_target_dims(rw, rh);
+				args.video_p.video_frm_width = rw;
+				args.video_p.video_frm_height = rh;
+				args.video_p.codec = reenc_params.codec;
+				dvr_reenc_inst = new Dvr(args);
+				ret = pthread_create(&g_tid_dvr_reenc, NULL, &Dvr::__THREAD__, dvr_reenc_inst);
+				assert(!ret);
+			}
 
 			reencoder = new MppEncoder(reenc_params, [](std::shared_ptr<std::vector<uint8_t>> nal) {
 				if (dvr_enabled && dvr_reenc_inst != NULL) {
 					dvr_reenc_inst->frame(nal);
 				}
+				if (display_restream) {
+					display_restream->send_nal(nal);
+				}
 			});
 			ret = pthread_create(&g_tid_enc, NULL, &MppEncoder::__THREAD__, reencoder);
 			assert(!ret);
 			frame_proc = new FrameProcessor(reencoder, reenc_params.fps, reenc_params.resolution, drm_fd);
+			if (display_restream) frame_proc->set_always_encode(true);
 			if (enable_live_colortrans) {
 				frame_proc->set_color_correction(live_colortrans_gain,
 				                                live_colortrans_offset, drm_fd);
@@ -1849,12 +1934,14 @@ int main(int argc, char **argv)
 			}
 			ret = pthread_create(&g_tid_fproc, NULL, &FrameProcessor::__THREAD__, frame_proc);
 			assert(!ret);
-			dvr_reenc_inst->on_start_cb = []() {
-				if (reencoder) reencoder->request_idr();
-			};
-			spdlog::info("Re-encoding recorder: codec={} fps={} bitrate={}kbps",
-			             reenc_params.codec == VideoCodec::H265 ? "h265" : "h264",
-			             reenc_params.fps, reenc_params.bitrate_kbps);
+			if (dvr_reenc_inst) {
+				dvr_reenc_inst->on_start_cb = []() {
+					if (reencoder) reencoder->request_idr();
+				};
+				spdlog::info("Re-encoding recorder: codec={} fps={} bitrate={}kbps",
+				             reenc_params.codec == VideoCodec::H265 ? "h265" : "h264",
+				             reenc_params.fps, reenc_params.bitrate_kbps);
+			}
 		}
 
 		if (dvr_autostart) {
@@ -1919,8 +2006,44 @@ int main(int argc, char **argv)
 			spdlog::info("stream {}: udp:{} codec={}", stream_manager->stream_count() - 1, sa.port,
 			             sa.stream_codec == VideoCodec::H264 ? "h264" : "h265");
 		}
+
+		// Wire per-stream restream targets from --restream args
+		for (auto &rs : restream_specs) {
+			if (rs.index >= 0) {
+				if (rs.index >= stream_manager->stream_count()) {
+					spdlog::warn("--restream index {} out of range (only {} streams)", rs.index, stream_manager->stream_count());
+					continue;
+				}
+				stream_manager->stream(rs.index)->restream_configure(rs.ip, rs.port);
+				spdlog::info("stream {}: restream → {}:{}", rs.index, rs.ip, rs.port);
+			}
+		}
+
+		// --restream-ip backward compat: same as --restream 0:<ip>:5600
+		if (!restream_ip_arg.empty() && stream_manager->stream_count() > 0) {
+			bool already_set = false;
+			for (auto &rs : restream_specs) { if (rs.index == 0) { already_set = true; break; } }
+			if (!already_set) {
+				stream_manager->stream(0)->restream_configure(restream_ip_arg, 5600);
+				spdlog::info("stream 0: restream → {}:5600 (from --restream-ip)", restream_ip_arg);
+			}
+		}
+
+		// Feed decoded frames from the active stream into frame_proc
+		// (needed for display restream and DVR re-encode in multistream mode).
+		if (frame_proc) {
+			for (int i = 0; i < stream_manager->stream_count(); i++) {
+				stream_manager->stream(i)->set_raw_frame_cb(
+					[](MppBuffer buf, uint32_t w, uint32_t h,
+					   uint32_t hs, uint32_t vs, MppFrameFormat fmt) {
+						if (frame_proc) frame_proc->push_latest(buf, w, h, hs, vs, fmt);
+					});
+			}
+		}
+
 		stream_manager->start_all();
 		main_loop();
+		if (display_restream) { display_restream->stop(); delete display_restream; display_restream = nullptr; }
 		stream_manager->stop_all();
 		// __FRAME_THREAD__ never ran in this mode, so frm_eos was never set
 		// by its own decoder-EOS path (the single-stream case's mechanism

@@ -66,6 +66,9 @@ public:
         color_correct_.store(on, std::memory_order_relaxed);
     }
 
+    // Force the encoder to run even when DVR is not recording (e.g. display restream).
+    void set_always_encode(bool on) { always_encode_.store(on, std::memory_order_relaxed); }
+
     // Called from the frame thread before freeing the decoder buffer group
     // (on resolution change).  Releases any pending decoder buffer ref and
     // waits for any in-flight copy to finish so the group can be freed safely.
@@ -119,6 +122,7 @@ private:
     // Written by UI thread (set_color_correction / set_color_correction_enabled),
     // read by processor thread — must be atomic where shared.
     std::atomic<bool>  color_correct_{false};
+    std::atomic<bool>  always_encode_{false};
     bool               gl_init_done_{false};
     uint32_t           gl_out_w_{0}, gl_out_h_{0};  // output dims at last GL init
     float              cc_gain_{1.f}, cc_offset_{0.f};

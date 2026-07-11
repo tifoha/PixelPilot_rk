@@ -171,7 +171,9 @@ set(LIB_SOURCE_FILES
         src/stream_pipeline.cpp
         src/stream_pipeline.h
         src/stream_manager.cpp
-        src/stream_manager.h)
+        src/stream_manager.h
+        src/udp_restream.cpp
+        src/udp_restream.h)
 set(SOURCE_FILES
   ${LIB_SOURCE_FILES}
   src/main.cpp

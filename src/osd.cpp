@@ -114,7 +114,7 @@ extern float live_colortrans_gain;
 #include "frame_processor.h"
 extern FrameProcessor *frame_proc;
 extern bool dvr_osd;
-extern bool restream_display_osd;
+extern bool display_reencode_osd;
 
 osd_thread_params *p;
 
@@ -2039,7 +2039,7 @@ void my_flush_cb(lv_display_t * display, const lv_area_t * area, uint8_t * px_ma
 
 	{
 		struct modeset_buf *osd_buf = &p->out->osd_bufs[p->out->osd_buf_switch];
-		if ((dvr_osd || restream_display_osd) && frame_proc)
+		if ((dvr_osd || display_reencode_osd) && frame_proc)
 			frame_proc->set_osd_blend(osd_buf->prime_fd, osd_buf->width, osd_buf->height,
 			                         osd_buf->stride / 4);
 	}
@@ -2178,7 +2178,7 @@ void *__OSD_THREAD__(void *param) {
 				ret = pthread_mutex_unlock(&osd_mutex);
 				assert(!ret);
 
-				if ((dvr_osd || restream_display_osd) && frame_proc)
+				if ((dvr_osd || display_reencode_osd) && frame_proc)
 					frame_proc->set_osd_blend(buf->prime_fd, buf->width, buf->height,
 					                         buf->stride / 4);
 

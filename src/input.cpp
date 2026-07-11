@@ -52,6 +52,8 @@ typedef struct {
 
 // Global array of GPIO buttons
 gpio_button_t gpio_buttons[MAX_GPIO_BUTTONS] = {0};
+// 0 = pressed (active-low, pull-up wiring); 1 = pressed (active-high, pull-down wiring)
+static int gpio_pressed_state = 1;
 #endif
 
 extern lv_obj_t * pp_menu_screen;
@@ -160,7 +162,10 @@ void init_button_from_config(YAML::Node& gpio_config, const char* button_name, i
 void init_gpio_buttons_from_config(YAML::Node& config) {
     YAML::Node gpio_config = config["gsmenu"]["gpio"];
     int button_index = 0;
-    
+
+    if (gpio_config["active_low"] && gpio_config["active_low"].as<bool>())
+        gpio_pressed_state = 0;
+
     init_button_from_config(gpio_config, "up", button_index);
     init_button_from_config(gpio_config, "down", button_index);
     init_button_from_config(gpio_config, "left", button_index);
@@ -433,7 +438,7 @@ void handle_gpio_input(void) {
                 gpio_buttons[i].last_state = current_state;
                 gpio_buttons[i].last_time = current_time;
                 
-                if (current_state == 1) { // Button pressed
+                if (current_state == gpio_pressed_state) { // Button pressed
                     gpio_buttons[i].is_holding = true;
                     gpio_buttons[i].long_press_sent = false;
                     gpio_buttons[i].repeat_time = current_time + INITIAL_REPEAT_DELAY_MS;
@@ -464,7 +469,7 @@ void handle_gpio_input(void) {
             }
             
             // LOGIC FOR HELD BUTTONS (LONG PRESS / REPEAT) ---
-            if (gpio_buttons[i].is_holding && current_state == 1 && 
+            if (gpio_buttons[i].is_holding && current_state == gpio_pressed_state &&
                 current_time >= gpio_buttons[i].repeat_time) {
                 
                 // Special long-press handling for 'right', 'left' and 'center'

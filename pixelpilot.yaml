@@ -6,6 +6,7 @@ gsmenu:
   error_timeout_ms: 5000
   gpio:
     # 5-pos joystick + buttons on OP5+ 40-pin header (gpiod character device numbering)
+    active_low: true   # buttons pull GPIO to GND when pressed (pull-up wiring)
     up:
       chip: gpiochip1
       pin: 15      # physical pin 27 = GPIO1_B7

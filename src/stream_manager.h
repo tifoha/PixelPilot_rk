@@ -17,6 +17,7 @@
 
 #include <atomic>
 #include <memory>
+#include <mutex>
 #include <vector>
 
 #include "stream_pipeline.h"
@@ -66,6 +67,7 @@ private:
     int video_zpos_;
     std::vector<std::unique_ptr<StreamPipeline>> streams_;
     std::atomic<int> active_index_{0};
+    std::mutex frame_cb_mutex_;
     bool any_modeset_done_ = false;
 
     uint32_t no_signal_fb_id_ = 0;

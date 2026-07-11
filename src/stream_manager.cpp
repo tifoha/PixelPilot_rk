@@ -27,12 +27,12 @@ void StreamManager::add_stream(int udp_port, VideoCodec codec) {
     auto sp = std::make_unique<StreamPipeline>(idx, udp_port, codec, drm_fd_, output_list_);
 
     sp->set_active_frame_cb([this, idx](uint32_t fb_id, uint64_t pts) {
-        // Only ever called while this stream is the active one (see
-        // StreamPipeline::decode_loop's active_.load() guard) -- but by
-        // the time this runs, a switch_to() on another thread could have
-        // just flipped active_index_ already. Re-check here so a frame
-        // that was "in flight" from the stream we're switching AWAY FROM
-        // can't sneak through and overwrite the new stream's geometry/FB.
+        // Serialize all decode-thread callbacks: the active_index_ check and
+        // the subsequent modeset/video-signal block must be atomic together.
+        // Without this lock, two threads can both pass the idx==active_index_
+        // check during a rapid switch and call modeset_perform_modeset
+        // concurrently on the same DRM fd → SIGSEGV.
+        std::lock_guard<std::mutex> lock(frame_cb_mutex_);
         if (idx != active_index_) return;
 
         StreamPipeline *sp_ = streams_[idx].get();

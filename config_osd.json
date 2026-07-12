@@ -101,7 +101,7 @@
         },
 
         {"name": "DVR status", "type": "DvrStatusWidget",
-            "x": -295, "y": 165,
+            "x": -95, "y": 45,
             "icon_path": "sdcard-white.png",
             "text": "REC",
             "facts": [{"name": "dvr.recording"}]

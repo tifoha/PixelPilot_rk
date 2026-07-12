@@ -172,6 +172,11 @@ bool MppEncoder::init_encoder(uint32_t width, uint32_t height,
     mpp_enc_cfg_set_s32(cfg, "prep:format",     (int)fmt);
 
     int bps = params.bitrate_kbps * 1000;
+    if (params.codec == VideoCodec::H264) {
+        mpp_enc_cfg_set_s32(cfg, "h264:profile", 77);  // Main (66=Baseline, 77=Main, 100=High)
+        mpp_enc_cfg_set_s32(cfg, "h264:level",   51);  // 5.1 — supports up to 1080p60
+    }
+
     mpp_enc_cfg_set_s32(cfg, "rc:mode",       MPP_ENC_RC_MODE_CBR);
     mpp_enc_cfg_set_s32(cfg, "rc:bps_target", bps);
     mpp_enc_cfg_set_s32(cfg, "rc:bps_max",    bps * 12 / 10);

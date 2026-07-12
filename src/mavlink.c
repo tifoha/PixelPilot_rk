@@ -30,6 +30,8 @@
 // C-compatible interface to DVR control (defined in main.cpp)
 void dvr_start_all(void);
 void dvr_stop_all(void);
+void dvr_arm_start(void);
+void dvr_arm_stop(void);
 
 #define earthRadiusKm 6371.0
 #define BILLION 1000000000L
@@ -155,15 +157,17 @@ void* __MAVLINK_THREAD__(void* arg) {
             {
               mavlink_heartbeat_t heartbeat = {};
               mavlink_msg_heartbeat_decode(&message, &heartbeat);
+              if (heartbeat.autopilot == MAV_AUTOPILOT_INVALID)
+                  break;
               int received_arm_state = (heartbeat.base_mode & MAV_MODE_FLAG_SAFETY_ARMED) != 0;
               if (current_arm_state != received_arm_state) {
                   osd_publish_bool_fact("mavlink.heartbeet.base_mode.armed", tags, 2, received_arm_state);
                   current_arm_state = received_arm_state;
                   if (mavlink_dvr_on_arm) {
                     if (received_arm_state) {
-                      dvr_start_all();
+                      dvr_arm_start();
                     } else {
-                      dvr_stop_all();
+                      dvr_arm_stop();
                     }
                   }
               }

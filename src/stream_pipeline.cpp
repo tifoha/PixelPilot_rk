@@ -205,6 +205,10 @@ void StreamPipeline::gst_pull_loop() {
                 if (active_.load())
                     osd_publish_uint_fact("gstreamer.received_bytes", NULL, 0, (ulong)map.size);
                 feed_packet(map.data, (int)map.size);
+                if (on_bs_frame_) {
+                    auto nal = std::make_shared<std::vector<uint8_t>>(map.data, map.data + map.size);
+                    on_bs_frame_(std::move(nal));
+                }
                 gst_buffer_unmap(buf, &map);
             }
         }
@@ -305,6 +309,7 @@ void StreamPipeline::init_buffers(MppFrame frame) {
         osd_publish_uint_fact("video.width",  NULL, 0, (ulong)frm_width_);
         osd_publish_uint_fact("video.height", NULL, 0, (ulong)frm_height_);
     }
+    if (on_dim_change_) on_dim_change_(frm_width_, frm_height_, codec_);
 
     free_drm_buffers();
 

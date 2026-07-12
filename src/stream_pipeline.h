@@ -64,6 +64,17 @@ public:
                                           uint32_t hs, uint32_t vs, MppFrameFormat)>;
     void set_raw_frame_cb(RawFrameCb cb) { on_raw_frame_ = std::move(cb); }
 
+    // Delivers raw compressed H.264/H.265 byte-stream NAL units from the
+    // GStreamer appsink, called for EVERY frame regardless of active_ state.
+    // Used for per-stream raw DVR: all configured streams record simultaneously.
+    using ByteStreamCb = std::function<void(std::shared_ptr<std::vector<uint8_t>>)>;
+    void set_bs_frame_cb(ByteStreamCb cb) { on_bs_frame_ = std::move(cb); }
+
+    // Fired once when the stream's decoded frame dimensions first become known
+    // (or change). Used by raw DVR to call set_video_params() with real dims.
+    using DimChangeCb = std::function<void(uint32_t w, uint32_t h, VideoCodec codec)>;
+    void set_dim_change_cb(DimChangeCb cb) { on_dim_change_ = std::move(cb); }
+
     // Latest decoded frame, read by the switcher/display path. fb_id==0
     // means nothing decoded yet (or stream gone stale -- see kStaleMs).
     uint32_t latest_fb_id() const;
@@ -131,6 +142,8 @@ private:
     std::thread gst_thread_;
     ActiveFrameCb on_active_frame_;
     RawFrameCb on_raw_frame_;
+    ByteStreamCb on_bs_frame_;
+    DimChangeCb on_dim_change_;
 
     bool first_sample_seen_ = false;
     bool first_feed_ok_logged_ = false;

@@ -18,7 +18,9 @@
 #include <fstream>
 #include <filesystem>
 #include <atomic>
+#include <map>
 #include <queue>
+#include <set>
 #include <mutex>
 #include <condition_variable>
 
@@ -113,8 +115,24 @@ void set_mpp_decoding_parameters(MppApi * mpi, MppCtx ctx);
 static pthread_mutex_t mpp_reinit_mutex = PTHREAD_MUTEX_INITIALIZER;
 static std::atomic<bool> mpp_reinit_pending{false};
 
-bool mavlink_dvr_on_arm = false;
+// Forward declarations — bodies defined in the DVR helpers section below
+extern "C" void dvr_start_all(void);
+extern "C" void dvr_stop_all(void);
+
+bool mavlink_dvr_on_arm = false;  // set when --dvr-on-mavlink-arm is used
 bool osd_custom_message = false;
+
+// Per-stream DVR config (multistream mode). Key: stream index (0,1,...) or -1 for display.
+struct StreamDvrCfg {
+    std::string tmpl;     // full strftime path template
+    int fps = 0;          // required for raw streams; ignored for display (-1)
+    Dvr *dvr = nullptr;
+    pthread_t tid = 0;
+};
+static std::map<int, StreamDvrCfg> stream_dvr_cfgs;
+static std::set<int> dvr_autostart_streams;  // specific streams to auto-start; empty+all_flag=all
+static bool dvr_autostart_all = false;        // --dvr-start with no index
+static std::set<int> dvr_arm_streams;         // streams to start on mavlink arm; empty=all
 bool disable_vsync = false;
 bool disable_gregidr = false;
 uint32_t refresh_frequency_ms = 1000;
@@ -133,7 +151,7 @@ bool dvr_osd   = false;
 bool display_reencode_osd = false;
 static int video_framerate = -1;
 static bool dvr_filenames_with_sequence = false;
-static int mp4_fragmentation_mode = 0;
+static int mp4_fragmentation_mode = 1;  // fmp4 by default: crash-safe, no moov needed
 static int64_t dvr_max_file_size = 4000000000LL;  // 4 GB (decimal), safe margin for VFAT 4 GiB limit
 FrameProcessor *frame_proc = nullptr;
 // Thread handles for the encoder and pacer — file-scope so live mode toggle can join them.
@@ -511,6 +529,9 @@ void sig_handler(int signum)
 	if (dvr_reenc_inst != NULL) {
 		dvr_reenc_inst->shutdown();
 	}
+	for (auto &[idx, cfg] : stream_dvr_cfgs) {
+		if (cfg.dvr && cfg.dvr != dvr_reenc_inst) cfg.dvr->shutdown();
+	}
 	if (frame_proc != NULL) {
 		frame_proc->shutdown();
 	}
@@ -522,21 +543,10 @@ void sig_handler(int signum)
 
 void sigusr1_handler(int signum) {
 	spdlog::info("Received signal {}", signum);
-	bool was_enabled = dvr_enabled;
-	if (was_enabled) {
-		// Stopping
-		if (dvr_raw) dvr_raw->stop_recording();
-		if (dvr_reenc_inst) dvr_reenc_inst->stop_recording();
-		dvr_enabled = 0;
-		osd_publish_bool_fact("dvr.recording", NULL, 0, false);
-	} else {
-		// Starting
-		dvr_enabled = 1;
-		osd_publish_bool_fact("dvr.recording", NULL, 0, true);
-		if (dvr_raw) dvr_raw->start_recording();
-		if (dvr_reenc_inst) dvr_reenc_inst->start_recording();
-		if (reencoder) reencoder->request_idr();
-	}
+	if (dvr_enabled)
+		dvr_stop_all();
+	else
+		dvr_start_all();
 }
 
 void sigusr2_handler(int signum) {
@@ -666,16 +676,63 @@ extern "C" {
     void dvr_start_all(void) {
         dvr_enabled = 1;
         osd_publish_bool_fact("dvr.recording", NULL, 0, true);
+        // Multistream per-stream DVRs
+        for (auto &[idx, cfg] : stream_dvr_cfgs) {
+            if (cfg.dvr) cfg.dvr->start_recording();
+        }
+        // Single-stream legacy DVRs (null in multistream mode)
         if (dvr_raw) dvr_raw->start_recording();
-        if (dvr_reenc_inst) dvr_reenc_inst->start_recording();
+        if (dvr_reenc_inst && !stream_dvr_cfgs.count(-1)) dvr_reenc_inst->start_recording();
         if (reencoder) reencoder->request_idr();
     }
 
     void dvr_stop_all(void) {
+        for (auto &[idx, cfg] : stream_dvr_cfgs) {
+            if (cfg.dvr) cfg.dvr->stop_recording();
+        }
         if (dvr_raw) dvr_raw->stop_recording();
-        if (dvr_reenc_inst) dvr_reenc_inst->stop_recording();
+        if (dvr_reenc_inst && !stream_dvr_cfgs.count(-1)) dvr_reenc_inst->stop_recording();
         dvr_enabled = 0;
         osd_publish_bool_fact("dvr.recording", NULL, 0, false);
+    }
+
+    // Start only the listed streams (used by --dvr-start <index> and --dvr-on-mavlink-arm)
+    static void dvr_start_streams(const std::set<int> &which) {
+        dvr_enabled = 1;
+        osd_publish_bool_fact("dvr.recording", NULL, 0, true);
+        for (int idx : which) {
+            auto it = stream_dvr_cfgs.find(idx);
+            if (it != stream_dvr_cfgs.end() && it->second.dvr)
+                it->second.dvr->start_recording();
+        }
+        if (reencoder && which.count(-1)) reencoder->request_idr();
+    }
+
+    static void dvr_stop_streams(const std::set<int> &which) {
+        for (int idx : which) {
+            auto it = stream_dvr_cfgs.find(idx);
+            if (it != stream_dvr_cfgs.end() && it->second.dvr)
+                it->second.dvr->stop_recording();
+        }
+        // Only clear dvr_enabled if all configured streams are stopped
+        bool any_active = false;
+        for (auto &[idx, cfg] : stream_dvr_cfgs) {
+            if (which.find(idx) == which.end() && cfg.dvr) { any_active = true; break; }
+        }
+        if (!any_active) {
+            dvr_enabled = 0;
+            osd_publish_bool_fact("dvr.recording", NULL, 0, false);
+        }
+    }
+
+    void dvr_arm_start(void) {
+        if (dvr_arm_streams.empty()) dvr_start_all();
+        else dvr_start_streams(dvr_arm_streams);
+    }
+
+    void dvr_arm_stop(void) {
+        if (dvr_arm_streams.empty()) dvr_stop_all();
+        else dvr_stop_streams(dvr_arm_streams);
     }
 
     // Switch DVR mode at runtime. Stops any active recording.
@@ -1119,7 +1176,7 @@ void printHelp() {
     "\n"
     "    --mavlink-port <port>  - UDP port for mavlink telemetry        (Default: 14550)\n"
     "\n"
-    "    --mavlink-dvr-on-arm   - Start recording when armed\n"
+    "    --mavlink-dvr-on-arm   - (deprecated) Start recording all DVR streams when armed\n"
     "\n"
     "    --codec <codec>        - Video codec, should be the same as on VTX  (Default: h265 <h264|h265>)\n"
     "\n"
@@ -1139,34 +1196,52 @@ void printHelp() {
     "\n"
     "    --osd-custom-message   - Enables the display of /run/pixelpilot.msg (beta feature, may be removed)\n"
     "\n"
-    "    --dvr-template <path>  - Save the video feed (no osd) to the provided filename template.\n"
-    "                             DVR is toggled by SIGUSR1 signal\n"
-    "                             Supports placeholders %%Y - year, %%m - month, %%d - day,\n"
-    "                             %%H - hour, %%M - minute, %%S - second. Ex: /media/DVR/%%Y-%%m-%%d_%%H-%%M-%%S.mp4\n"
+    "  DVR (multistream mode):\n"
+    "    --dvr-template <idx>[:<path>]  - Enable DVR for stream <idx> (0,1,...) or 'display'.\n"
+    "                             Default paths: /media/DVR/<idx>/%%Y-%%m-%%d_%%H-%%M-%%S.mp4\n"
+    "                             or /media/DVR/display/%%Y-%%m-%%d_%%H-%%M-%%S.mp4\n"
+    "                             Repeatable. SIGUSR1 toggles all configured streams.\n"
     "\n"
-    "    --dvr-sequenced-files  - Prepend a sequence number to the names of the dvr files\n"
+    "    --dvr-framerate <idx>:<fps> - Required for raw stream DVR; set output fps for stream <idx>\n"
     "\n"
-    "    --dvr-start            - Start DVR immediately\n"
+    "    --dvr-start [<idx>]    - Start DVR immediately. With index: only that stream.\n"
+    "                             Without index: all configured streams. Repeatable.\n"
     "\n"
-    "    --dvr-framerate <rate> - Force the dvr framerate for smoother dvr, ex: 60\n"
+    "    --dvr-on-mavlink-arm <idx> - Start/stop stream <idx> DVR on FC arm/disarm. Repeatable.\n"
+    "                             'display' selects the display DVR. Omit for all streams.\n"
     "\n"
     "    --dvr-max-size <MB>    - Split DVR files at <MB> megabytes (Default: 4000, for VFAT)\n"
     "\n"
     "    --dvr-fmp4             - Save the video feed as a fragmented mp4\n"
     "\n"
-    "    --dvr-mode <mode>      - DVR recording mode: raw, reencode, or both (Default: raw)\n"
+    "    --dvr-sequenced-files  - Prepend a sequence number to the names of the dvr files\n"
     "\n"
-    "    --dvr-reenc-codec <c>  - Re-encode codec: h264 or h265  (Default: h264)\n"
+    "  Display re-encoder (shared by --restream display: and display DVR):\n"
+    "    --display-reencode-codec <c>  - Re-encode codec: h264 or h265  (Default: h264)\n"
     "\n"
-    "    --dvr-reenc-bitrate <k>- Re-encode bitrate in kbps       (Default: 8000)\n"
+    "    --display-reencode-bitrate <k>- Re-encode bitrate in kbps       (Default: 8000 with DVR, 1500 restream-only)\n"
     "\n"
-    "    --dvr-reenc-fps <fps>  - Re-encode output FPS            (Default: 30)\n"
+    "    --display-reencode-fps <fps>  - Re-encode output FPS            (Default: 30)\n"
     "\n"
-    "    --dvr-reenc-resolution <r> - Re-encode resolution: 720p or 1080p (Default: 1080p)\n"
-    "\n"
-    "    --dvr-osd              - Blend the OSD into the DVR recording\n"
+    "    --display-reencode-resolution <r> - Re-encode resolution: 720p or 1080p (Default: 1080p with DVR, 720p restream-only)\n"
     "\n"
     "    --display-reencode-osd - Burn OSD into display restream / display DVR\n"
+    "\n"
+    "  DVR (single-stream legacy mode, --dvr-template without stream index):\n"
+    "    --dvr-template <path>  - Save the video feed to the provided filename template.\n"
+    "                             DVR is toggled by SIGUSR1 signal\n"
+    "                             Supports placeholders %%Y - year, %%m - month, %%d - day,\n"
+    "                             %%H - hour, %%M - minute, %%S - second. Ex: /media/DVR/%%Y-%%m-%%d_%%H-%%M-%%S.mp4\n"
+    "\n"
+    "    --dvr-start            - (legacy) Start DVR immediately\n"
+    "\n"
+    "    --dvr-framerate <fps>  - (legacy) Force the dvr framerate, ex: 60\n"
+    "\n"
+    "    --dvr-mode <mode>      - (legacy) DVR recording mode: raw, reencode, or both (Default: raw)\n"
+    "\n"
+    "    --dvr-reenc-codec/bitrate/fps/resolution - (legacy aliases for --display-reencode-*)\n"
+    "\n"
+    "    --dvr-osd              - (legacy) Blend the OSD into the DVR recording\n"
     "\n"
     "    --screen-mode <mode>   - Override default screen mode. <width>x<heigth>@<fps> ex: 1920x1080@120\n"
     "\n"
@@ -1322,12 +1397,77 @@ int main(int argc, char **argv)
 	}
 
 	__OnArgument("--dvr-start") {
+		// Optional value: stream index (0,1,...) or "display" → specific stream only.
+		// No value (next token is another flag) → autostart all configured streams.
+		if (ArgID + 1 < argc && argv[ArgID + 1][0] != '-') {
+			const char *v = argv[++ArgID];
+			if (strcmp(v, "display") == 0) {
+				dvr_autostart_streams.insert(-1);
+			} else {
+				char *endp;
+				long idx = strtol(v, &endp, 10);
+				if (*endp != '\0' || idx < 0) {
+					fprintf(stderr, "--dvr-start: invalid index '%s'\n", v);
+					return -1;
+				}
+				dvr_autostart_streams.insert((int)idx);
+			}
+		} else {
+			dvr_autostart_all = true;
+		}
 		dvr_autostart = 1;
 		continue;
 	}
 
+	__OnArgument("--dvr-on-mavlink-arm") {
+		const char *v = __ArgValue;
+		if (strcmp(v, "display") == 0) {
+			dvr_arm_streams.insert(-1);
+		} else {
+			char *endp;
+			long idx = strtol(v, &endp, 10);
+			if (*endp != '\0' || idx < 0) {
+				fprintf(stderr, "--dvr-on-mavlink-arm: invalid index '%s'\n", v);
+				return -1;
+			}
+			dvr_arm_streams.insert((int)idx);
+		}
+		mavlink_dvr_on_arm = true;
+		continue;
+	}
+
 	__OnArgument("--dvr-template") {
-		dvr_template = const_cast<char*>(__ArgValue);
+		const char *val = __ArgValue;
+		// New multistream form: <index_or_display>[:<path>]
+		//   where index is a non-negative integer or "display"
+		// Legacy single-stream form: path starting with / or . or ~
+		int idx = INT_MIN;
+		std::string tmpl;
+		const char *colon = strchr(val, ':');
+		std::string prefix_s;
+		if (colon) {
+			prefix_s = std::string(val, colon - val);
+		} else {
+			prefix_s = std::string(val);
+		}
+		if (prefix_s == "display") {
+			idx = -1;
+			tmpl = colon ? std::string(colon + 1) : "/media/DVR/display/%Y-%m-%d_%H-%M-%S.mp4";
+		} else {
+			char *endp;
+			long v = strtol(prefix_s.c_str(), &endp, 10);
+			if (*endp == '\0' && v >= 0 && (!colon || val[0] != '/')) {
+				// Numeric index form: "0", "1", "0:/path/..."
+				idx = (int)v;
+				tmpl = colon ? std::string(colon + 1) : "/media/DVR/" + prefix_s + "/%Y-%m-%d_%H-%M-%S.mp4";
+			}
+		}
+		if (idx != INT_MIN) {
+			stream_dvr_cfgs[idx].tmpl = tmpl;
+		} else {
+			// Legacy single-stream path (starts with / or relative)
+			dvr_template = const_cast<char*>(val);
+		}
 		continue;
 	}
 
@@ -1337,7 +1477,22 @@ int main(int argc, char **argv)
 	}
 
 	__OnArgument("--dvr-framerate") {
-		video_framerate = atoi(__ArgValue);
+		const char *val = __ArgValue;
+		const char *colon = strchr(val, ':');
+		if (colon) {
+			// New form: <index>:<fps>
+			std::string idx_s(val, colon - val);
+			char *endp;
+			long idx = strtol(idx_s.c_str(), &endp, 10);
+			if (*endp != '\0' || idx < 0) {
+				fprintf(stderr, "--dvr-framerate: invalid index '%s'\n", idx_s.c_str());
+				return -1;
+			}
+			stream_dvr_cfgs[(int)idx].fps = atoi(colon + 1);
+		} else {
+			// Legacy single-stream form
+			video_framerate = atoi(val);
+		}
 		continue;
 	}
 
@@ -1368,32 +1523,32 @@ int main(int argc, char **argv)
 		continue;
 	}
 
-	__OnArgument("--dvr-reenc-codec") {
+	if (!strcmp(Arg, "--display-reencode-codec") || !strcmp(Arg, "--dvr-reenc-codec")) {
 		VideoCodec c = video_codec(const_cast<char*>(__ArgValue));
 		if (c == VideoCodec::UNKNOWN) {
-			fprintf(stderr, "unsupported codec for --dvr-reenc-codec (use h264 or h265)\n");
+			fprintf(stderr, "unsupported codec (use h264 or h265)\n");
 			return -1;
 		}
 		reenc_params.codec = c;
 		continue;
 	}
 
-	__OnArgument("--dvr-reenc-bitrate") {
+	if (!strcmp(Arg, "--display-reencode-bitrate") || !strcmp(Arg, "--dvr-reenc-bitrate")) {
 		reenc_params.bitrate_kbps = atoi(__ArgValue);
 		continue;
 	}
 
-	__OnArgument("--dvr-reenc-fps") {
+	if (!strcmp(Arg, "--display-reencode-fps") || !strcmp(Arg, "--dvr-reenc-fps")) {
 		reenc_params.fps = atoi(__ArgValue);
 		continue;
 	}
 
-	__OnArgument("--dvr-reenc-resolution") {
+	if (!strcmp(Arg, "--display-reencode-resolution") || !strcmp(Arg, "--dvr-reenc-resolution")) {
 		const char *v = __ArgValue;
 		if (!strcmp(v, "720p")) reenc_params.resolution = EncResolution::Res720p;
 		else if (!strcmp(v, "1080p")) reenc_params.resolution = EncResolution::Res1080p;
 		else {
-			fprintf(stderr, "unsupported resolution for --dvr-reenc-resolution (use 720p or 1080p)\n");
+			fprintf(stderr, "unsupported resolution (use 720p or 1080p)\n");
 			return -1;
 		}
 		continue;
@@ -1453,7 +1608,9 @@ int main(int argc, char **argv)
 	}
 
 	__OnArgument("--mavlink-dvr-on-arm") {
+		// Legacy alias: arm/disarm controls all configured DVR streams
 		mavlink_dvr_on_arm = true;
+		// dvr_arm_streams stays empty → dvr_arm_start()/dvr_arm_stop() will affect all
 		continue;
 	}
 
@@ -1632,8 +1789,25 @@ int main(int argc, char **argv)
 
 	if (dvr_template != NULL && (dvr_mode == DVR_MODE_RAW || dvr_mode == DVR_MODE_BOTH) && video_framerate < 0) {
 		printf("--dvr-framerate must be provided when raw DVR is enabled.\n"
-		       "Use --dvr-mode reencode with --dvr-reenc-fps for hardware re-encoding only.\n");
+		       "Use --dvr-mode reencode with --display-reencode-fps for hardware re-encoding only.\n");
 		return 0;
+	}
+	// Validate per-stream raw DVRs have framerate set
+	for (auto &[idx, cfg] : stream_dvr_cfgs) {
+		if (idx >= 0 && cfg.fps <= 0) {
+			fprintf(stderr, "--dvr-framerate %d:<fps> is required for raw stream DVR\n", idx);
+			return -1;
+		}
+	}
+	// Validate duplicate templates
+	{
+		std::set<std::string> seen_tmpl;
+		for (auto &[idx, cfg] : stream_dvr_cfgs) {
+			if (!seen_tmpl.insert(cfg.tmpl).second) {
+				fprintf(stderr, "error: duplicate --dvr-template path: %s\n", cfg.tmpl.c_str());
+				return -1;
+			}
+		}
 	}
 
 	printf("PixelPilot Rockchip %d.%d\n", APP_VERSION_MAJOR, APP_VERSION_MINOR);
@@ -1848,7 +2022,7 @@ int main(int argc, char **argv)
 
 	signal(SIGINT, sig_handler);
 	signal(SIGPIPE, sig_handler);
-	if (dvr_template) {
+	if (dvr_template || !stream_dvr_cfgs.empty()) {
 		signal(SIGUSR1, sigusr1_handler);
 	}
 	signal(SIGUSR2, sigusr2_handler);
@@ -1872,9 +2046,10 @@ int main(int argc, char **argv)
 		}
 	}
 
-	// Display-only restream: use stream-friendly defaults so IDR frames fit in
-	// a single UDP datagram.  User can override with --dvr-reenc-bitrate/resolution.
-	if (display_restream && !dvr_template) {
+	// Display-only restream (no DVR): lower defaults for stream-friendliness.
+	// Don't lower when display DVR is also configured (needs higher quality).
+	bool have_display_dvr = stream_dvr_cfgs.count(-1) > 0;
+	if (display_restream && !dvr_template && !have_display_dvr) {
 		if (reenc_params.bitrate_kbps == 8000)
 			reenc_params.bitrate_kbps = 1500;
 		if (reenc_params.resolution == EncResolution::Res1080p)
@@ -1882,10 +2057,11 @@ int main(int argc, char **argv)
 	}
 
 	pthread_t tid_frame, tid_display, tid_osd, tid_mavlink, tid_wfbcli;
-	if (dvr_template != NULL || display_restream != nullptr) {
+	bool need_display_enc = display_restream != nullptr || have_display_dvr;
+	if (dvr_template != NULL || need_display_enc) {
 		bool has_raw   = dvr_template && (dvr_mode == DVR_MODE_RAW || dvr_mode == DVR_MODE_BOTH);
 		bool has_reenc = (dvr_template && (dvr_mode == DVR_MODE_REENCODE || dvr_mode == DVR_MODE_BOTH))
-		                 || display_restream != nullptr;
+		                 || need_display_enc;
 		bool both      = dvr_template && (dvr_mode == DVR_MODE_BOTH);
 
 		if (has_raw) {
@@ -1905,7 +2081,27 @@ int main(int argc, char **argv)
 		}
 
 		if (has_reenc) {
-			if (dvr_template) {
+			// Create display DVR Dvr instance.
+			// New path: from stream_dvr_cfgs[-1] (multistream --dvr-template display:...)
+			if (have_display_dvr) {
+				auto &cfg = stream_dvr_cfgs[-1];
+				dvr_thread_params args;
+				args.filename_template = const_cast<char*>(cfg.tmpl.c_str());
+				args.mp4_fragmentation_mode = mp4_fragmentation_mode;
+				args.dvr_filenames_with_sequence = dvr_filenames_with_sequence;
+				args.video_framerate = reenc_params.fps;
+				args.max_file_size = dvr_max_file_size;
+				uint32_t rw, rh; reenc_target_dims(rw, rh);
+				args.video_p.video_frm_width = rw;
+				args.video_p.video_frm_height = rh;
+				args.video_p.codec = reenc_params.codec;
+				dvr_reenc_inst = new Dvr(args);
+				cfg.dvr = dvr_reenc_inst;
+				ret = pthread_create(&cfg.tid, NULL, &Dvr::__THREAD__, dvr_reenc_inst);
+				assert(!ret);
+				g_tid_dvr_reenc = cfg.tid;
+			} else if (dvr_template) {
+				// Legacy single-stream reenc path
 				dvr_thread_params args;
 				char *tpl = both ? dvr_template_with_suffix(dvr_template, "_reenc") : dvr_template;
 				args.filename_template = tpl;
@@ -1951,15 +2147,39 @@ int main(int argc, char **argv)
 				             reenc_params.fps, reenc_params.bitrate_kbps);
 			}
 		}
+	}
 
-		if (dvr_autostart) {
-			dvr_enabled = 1;
-			osd_publish_bool_fact("dvr.recording", NULL, 0, true);
-			if (dvr_raw) dvr_raw->start_recording();
-			if (dvr_reenc_inst) dvr_reenc_inst->start_recording();
-			if (reencoder) reencoder->request_idr();
+	// Create per-stream raw DVRs (multistream --dvr-template 0:... etc.)
+	for (auto &[idx, cfg] : stream_dvr_cfgs) {
+		if (idx < 0) continue;  // display DVR handled above
+		VideoCodec sc = (idx < (int)stream_args.size()) ? stream_args[idx].stream_codec : codec;
+		if (sc == VideoCodec::UNKNOWN) sc = codec;
+		dvr_thread_params args;
+		args.filename_template = const_cast<char*>(cfg.tmpl.c_str());
+		args.mp4_fragmentation_mode = mp4_fragmentation_mode;
+		args.dvr_filenames_with_sequence = dvr_filenames_with_sequence;
+		args.video_framerate = cfg.fps;
+		args.max_file_size = dvr_max_file_size;
+		args.video_p.video_frm_width = 0;
+		args.video_p.video_frm_height = 0;
+		args.video_p.codec = sc;
+		cfg.dvr = new Dvr(args);
+		ret = pthread_create(&cfg.tid, NULL, &Dvr::__THREAD__, cfg.dvr);
+		assert(!ret);
+		spdlog::info("stream {}: raw DVR → {}", idx, cfg.tmpl);
+	}
+
+	// Autostart DVR streams
+	if (dvr_autostart) {
+		if (!dvr_autostart_streams.empty() && !dvr_autostart_all) {
+			// Specific streams only (--dvr-start 0 --dvr-start display etc.)
+			dvr_start_streams(dvr_autostart_streams);
+		} else {
+			// No specific streams (--dvr-start with no index, or all configured)
+			dvr_start_all();
 		}
 	}
+
 	if (stream_args.empty()) {
 		ret = pthread_create(&tid_frame, NULL, __FRAME_THREAD__, NULL);
 		assert(!ret);
@@ -2049,6 +2269,28 @@ int main(int argc, char **argv)
 			}
 		}
 
+		// Wire per-stream raw DVR byte-stream callbacks.
+		// Each stream's ByteStreamCb delivers raw H.264/H.265 NAL units for
+		// all frames (active or not) so all configured streams record simultaneously.
+		// DimChangeCb supplies the real frame dimensions once the first frame
+		// is decoded, so the DVR muxer can write valid MP4 headers.
+		for (auto &[idx, cfg] : stream_dvr_cfgs) {
+			if (idx < 0 || !cfg.dvr) continue;
+			if (idx >= stream_manager->stream_count()) {
+				spdlog::warn("--dvr-template {}: stream index out of range (only {} streams)", idx, stream_manager->stream_count());
+				continue;
+			}
+			Dvr *d = cfg.dvr;
+			stream_manager->stream(idx)->set_bs_frame_cb(
+				[d](std::shared_ptr<std::vector<uint8_t>> nal) {
+					if (dvr_enabled) d->frame(nal);
+				});
+			stream_manager->stream(idx)->set_dim_change_cb(
+				[d](uint32_t w, uint32_t h, VideoCodec codec) {
+					d->set_video_params(w, h, codec);
+				});
+		}
+
 		stream_manager->start_all();
 		main_loop();
 		if (display_restream) { display_restream->stop(); delete display_restream; display_restream = nullptr; }
@@ -2095,7 +2337,7 @@ int main(int argc, char **argv)
 		ret = pthread_join(tid_osd, NULL);
 		assert(!ret);
 	}
-	if (dvr_template != NULL) {
+	if (dvr_template != NULL || need_display_enc) {
 		if (g_tid_fproc) {
 			ret = pthread_join(g_tid_fproc, NULL);
 			assert(!ret);
@@ -2108,9 +2350,18 @@ int main(int argc, char **argv)
 			ret = pthread_join(g_tid_dvr_raw, NULL);
 			assert(!ret);
 		}
-		if (g_tid_dvr_reenc) {
+		// Join display DVR thread unless it's tracked by stream_dvr_cfgs[-1]
+		if (g_tid_dvr_reenc && !stream_dvr_cfgs.count(-1)) {
 			ret = pthread_join(g_tid_dvr_reenc, NULL);
 			assert(!ret);
+		}
+	}
+	// Join per-stream DVR threads (raw streams and display DVR if via stream_dvr_cfgs)
+	for (auto &[idx, cfg] : stream_dvr_cfgs) {
+		if (cfg.tid) {
+			ret = pthread_join(cfg.tid, NULL);
+			assert(!ret);
+			cfg.tid = 0;
 		}
 	}
 

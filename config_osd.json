@@ -1,197 +1,578 @@
 {
-    "format": "0.0.1",
-    "assets_dir": "/usr/share/pixelpilot/",
-    "widgets": [
-
-        {"name": "bg_topleft", "type": "BoxWidget", "x": 0, "y": 0, "width": 300, "height": 100,
-            "color": {"r": 0.0, "g": 0.0, "b": 0.0, "alpha": 0.4}, "facts": []},
-
-        {"name": "Armed", "type": "TplTextWidget", "x": 10, "y": 25,
-            "template": "ARM: %b",
-            "facts": [{"name": "mavlink.heartbeet.base_mode.armed"}]
+  "format": "0.0.1",
+  "assets_dir": "/usr/share/pixelpilot/",
+  "widgets": [
+    {
+      "name": "bg_topleft",
+      "type": "BoxWidget",
+      "x": 0,
+      "y": 0,
+      "width": 300,
+      "height": 100,
+      "color": {
+        "r": 0.0,
+        "g": 0.0,
+        "b": 0.0,
+        "alpha": 0.4
+      },
+      "facts": []
+    },
+    {
+      "name": "Armed",
+      "type": "TplTextWidget",
+      "x": 10,
+      "y": 25,
+      "template": "ARM: %b",
+      "facts": [
+        {
+          "name": "mavlink.heartbeet.base_mode.armed"
+        }
+      ]
+    },
+    {
+      "name": "Throttle",
+      "type": "TplTextWidget",
+      "x": 10,
+      "y": 50,
+      "template": "THR: %i%%",
+      "facts": [
+        {
+          "name": "mavlink.vfr_hud.throttle"
+        }
+      ]
+    },
+    {
+      "name": "Roll",
+      "type": "TplTextWidget",
+      "x": 10,
+      "y": 75,
+      "template": "R:%+.1f  P:%+.1f",
+      "facts": [
+        {
+          "name": "mavlink.attitude.roll",
+          "convert": "x * 57.2958"
         },
-
-        {"name": "Throttle", "type": "TplTextWidget", "x": 10, "y": 50,
-            "template": "THR: %u%%",
-            "facts": [{"name": "mavlink.vfr_hud.throttle"}]
+        {
+          "name": "mavlink.attitude.pitch",
+          "convert": "x * 57.2958"
+        }
+      ]
+    },
+    {
+      "name": "bg_topright",
+      "type": "BoxWidget",
+      "x": -310,
+      "y": 0,
+      "width": 310,
+      "height": 170,
+      "color": {
+        "r": 0.0,
+        "g": 0.0,
+        "b": 0.0,
+        "alpha": 0.4
+      },
+      "facts": []
+    },
+    {
+      "name": "GS label",
+      "type": "TplTextWidget",
+      "x": -295,
+      "y": 18,
+      "template": "GS",
+      "facts": []
+    },
+    {
+      "name": "Signal ant1",
+      "type": "IconSelectorWidget",
+      "x": -295,
+      "y": 28,
+      "facts": [
+        {
+          "name": "wfbcli.rx.ant_stats.rssi_avg",
+          "tags": {
+            "ant_id": "0",
+            "id": "video rx"
+          }
+        }
+      ],
+      "ranges_and_icons": [
+        {
+          "range": [
+            -40,
+            30
+          ],
+          "icon_path": "signal1.png"
         },
-
-        {"name": "Roll", "type": "TplTextWidget", "x": 10, "y": 75,
-            "template": "R:%+.1f  P:%+.1f",
-            "facts": [
-                {"name": "mavlink.attitude.roll",  "convert": "x * 57.2958"},
-                {"name": "mavlink.attitude.pitch", "convert": "x * 57.2958"}
-            ]
+        {
+          "range": [
+            -48,
+            -41
+          ],
+          "icon_path": "signal2.png"
         },
-
-        {"name": "bg_topright", "type": "BoxWidget", "x": -310, "y": 0, "width": 310, "height": 170,
-            "color": {"r": 0.0, "g": 0.0, "b": 0.0, "alpha": 0.4}, "facts": []},
-
-        {"name": "GS label", "type": "TplTextWidget", "x": -295, "y": 18,
-            "template": "GS",
-            "facts": []
+        {
+          "range": [
+            -56,
+            -49
+          ],
+          "icon_path": "signal3.png"
         },
-
-        {"name": "Signal ant1", "type": "IconSelectorWidget", "x": -295, "y": 28,
-            "facts": [{"name": "wfbcli.rx.ant_stats.rssi_avg", "tags": {"ant_id": "0", "id": "video rx"}}],
-            "ranges_and_icons": [
-                {"range": [-40,  30], "icon_path": "signal1.png"},
-                {"range": [-48, -41], "icon_path": "signal2.png"},
-                {"range": [-56, -49], "icon_path": "signal3.png"},
-                {"range": [-64, -57], "icon_path": "signal4.png"},
-                {"range": [-72, -65], "icon_path": "signal5.png"},
-                {"range": [-80, -73], "icon_path": "signal6.png"},
-                {"range": [-90, -81], "icon_path": "signal7.png"},
-                {"range": [-130,-91], "icon_path": "signal8.png"}
-            ]
+        {
+          "range": [
+            -64,
+            -57
+          ],
+          "icon_path": "signal4.png"
         },
-
-        {"name": "Signal ant2", "type": "IconSelectorWidget", "x": -250, "y": 28,
-            "facts": [{"name": "wfbcli.rx.ant_stats.rssi_avg", "tags": {"ant_id": "1", "id": "video rx"}}],
-            "ranges_and_icons": [
-                {"range": [-40,  30], "icon_path": "signal1.png"},
-                {"range": [-48, -41], "icon_path": "signal2.png"},
-                {"range": [-56, -49], "icon_path": "signal3.png"},
-                {"range": [-64, -57], "icon_path": "signal4.png"},
-                {"range": [-72, -65], "icon_path": "signal5.png"},
-                {"range": [-80, -73], "icon_path": "signal6.png"},
-                {"range": [-90, -81], "icon_path": "signal7.png"},
-                {"range": [-130,-91], "icon_path": "signal8.png"}
-            ]
+        {
+          "range": [
+            -72,
+            -65
+          ],
+          "icon_path": "signal5.png"
         },
-
-        {"name": "RSSI ant1", "type": "TplTextWidget", "x": -295, "y": 84,
-            "template": "%d",
-            "facts": [{"name": "wfbcli.rx.ant_stats.rssi_avg", "tags": {"ant_id": "0", "id": "video rx"}}]
+        {
+          "range": [
+            -80,
+            -73
+          ],
+          "icon_path": "signal6.png"
         },
-
-        {"name": "RSSI ant2", "type": "TplTextWidget", "x": -250, "y": 84,
-            "template": "%d",
-            "facts": [{"name": "wfbcli.rx.ant_stats.rssi_avg", "tags": {"ant_id": "1", "id": "video rx"}}]
+        {
+          "range": [
+            -90,
+            -81
+          ],
+          "icon_path": "signal7.png"
         },
-
-        {"name": "CPU MEM", "type": "TplTextWidget", "x": -295, "y": 107,
-            "template": "CPU:%u%% MEM:%u%%",
-            "facts": [
-                {"name": "os_mon.cpu.load_total"},
-                {"name": "os_mon.mem.used_pct"}
-            ]
+        {
+          "range": [
+            -130,
+            -91
+          ],
+          "icon_path": "signal8.png"
+        }
+      ]
+    },
+    {
+      "name": "Signal ant2",
+      "type": "IconSelectorWidget",
+      "x": -250,
+      "y": 28,
+      "facts": [
+        {
+          "name": "wfbcli.rx.ant_stats.rssi_avg",
+          "tags": {
+            "ant_id": "1",
+            "id": "video rx"
+          }
+        }
+      ],
+      "ranges_and_icons": [
+        {
+          "range": [
+            -40,
+            30
+          ],
+          "icon_path": "signal1.png"
         },
-
-        {"name": "Video bitrate", "type": "VideoBitrateWidget",
-            "x": -295, "y": 132,
-            "icon_path": "network.png",
-            "template": "%f Mbps",
-            "per_second_window_s": 2,
-            "per_second_bucket_ms": 100,
-            "facts": [{"name": "gstreamer.received_bytes"}]
+        {
+          "range": [
+            -48,
+            -41
+          ],
+          "icon_path": "signal2.png"
         },
-
-        {"name": "Video FPS", "type": "VideoWidget",
-            "x": -295, "y": 157,
-            "icon_path": "framerate.png",
-            "template": "%u fps | %ux%u",
-            "per_second_window_s": 2,
-            "per_second_bucket_ms": 200,
-            "facts": [
-                {"name": "video.displayed_frame"},
-                {"name": "video.width"},
-                {"name": "video.height"}
-            ]
+        {
+          "range": [
+            -56,
+            -49
+          ],
+          "icon_path": "signal3.png"
         },
-
-        {"name": "DVR status", "type": "DvrStatusWidget",
-            "x": -95, "y": 45,
-            "icon_path": "sdcard-white.png",
-            "text": "REC",
-            "facts": [{"name": "dvr.recording"}]
+        {
+          "range": [
+            -64,
+            -57
+          ],
+          "icon_path": "signal4.png"
         },
-
-        {"name": "bg_bottomleft", "type": "BoxWidget", "x": 0, "y": -130, "width": 320, "height": 130,
-            "color": {"r": 0.0, "g": 0.0, "b": 0.0, "alpha": 0.4}, "facts": []},
-
-        {"name": "Altitude", "type": "TplTextWidget", "x": 10, "y": -110,
-            "template": "ALT: %.1f m",
-            "facts": [{"name": "mavlink.vfr_hud.alt"}]
+        {
+          "range": [
+            -72,
+            -65
+          ],
+          "icon_path": "signal5.png"
         },
-
-        {"name": "Climb", "type": "TplTextWidget", "x": 10, "y": -85,
-            "template": "VS:  %+.1f m/s",
-            "facts": [{"name": "mavlink.vfr_hud.climb"}]
+        {
+          "range": [
+            -80,
+            -73
+          ],
+          "icon_path": "signal6.png"
         },
-
-        {"name": "Ground speed", "type": "TplTextWidget", "x": 10, "y": -60,
-            "template": "SPD: %.1f m/s",
-            "facts": [{"name": "mavlink.vfr_hud.groundspeed"}]
+        {
+          "range": [
+            -90,
+            -81
+          ],
+          "icon_path": "signal7.png"
         },
-
-        {"name": "mAh", "type": "TplTextWidget", "x": 10, "y": -35,
-            "template": "mAh: %d",
-            "facts": [{"name": "mavlink.battery_status.current_consumed"}]
+        {
+          "range": [
+            -130,
+            -91
+          ],
+          "icon_path": "signal8.png"
+        }
+      ]
+    },
+    {
+      "name": "RSSI ant1",
+      "type": "TplTextWidget",
+      "x": -295,
+      "y": 84,
+      "template": "%d",
+      "facts": [
+        {
+          "name": "wfbcli.rx.ant_stats.rssi_avg",
+          "tags": {
+            "ant_id": "0",
+            "id": "video rx"
+          }
+        }
+      ]
+    },
+    {
+      "name": "RSSI ant2",
+      "type": "TplTextWidget",
+      "x": -250,
+      "y": 84,
+      "template": "%d",
+      "facts": [
+        {
+          "name": "wfbcli.rx.ant_stats.rssi_avg",
+          "tags": {
+            "ant_id": "1",
+            "id": "video rx"
+          }
+        }
+      ]
+    },
+    {
+      "name": "CPU MEM",
+      "type": "TplTextWidget",
+      "x": -295,
+      "y": 107,
+      "template": "CPU:%u%% MEM:%u%%",
+      "facts": [
+        {
+          "name": "os_mon.cpu.load_total"
         },
-
-        {"name": "Battery", "type": "BatteryCellWidget",
-            "x": 10, "y": -10,
-            "critical_voltage": 3.5,
-            "max_voltage": 4.2,
-            "num_cells": "even",
-            "template": "BAT: %.2f V/cell",
-            "facts": [{"name": "mavlink.sys_status.voltage_battery"}]
+        {
+          "name": "os_mon.mem.used_pct"
+        }
+      ]
+    },
+    {
+      "name": "Video bitrate",
+      "type": "VideoBitrateWidget",
+      "x": -295,
+      "y": 132,
+      "icon_path": "network.png",
+      "template": "%f Mbps",
+      "per_second_window_s": 2,
+      "per_second_bucket_ms": 100,
+      "facts": [
+        {
+          "name": "gstreamer.received_bytes"
+        }
+      ]
+    },
+    {
+      "name": "Video FPS",
+      "type": "VideoWidget",
+      "x": -295,
+      "y": 157,
+      "icon_path": "framerate.png",
+      "template": "%u fps | %ux%u",
+      "per_second_window_s": 2,
+      "per_second_bucket_ms": 200,
+      "facts": [
+        {
+          "name": "video.displayed_frame"
         },
-
-        {"name": "bg_bottomright", "type": "BoxWidget", "x": -210, "y": -135, "width": 210, "height": 135,
-            "color": {"r": 0.0, "g": 0.0, "b": 0.0, "alpha": 0.4}, "facts": []},
-
-        {"name": "Home arrow", "type": "IconSelectorWidget", "x": -305, "y": -130,
-            "facts": [{"name": "mavlink.home.bearing_relative"}],
-            "ranges_and_icons": [
-                {"range": [338, 360], "icon_path": "arrow_n.png"},
-                {"range": [0,   22],  "icon_path": "arrow_n.png"},
-                {"range": [23,  67],  "icon_path": "arrow_ne.png"},
-                {"range": [68,  112], "icon_path": "arrow_e.png"},
-                {"range": [113, 157], "icon_path": "arrow_se.png"},
-                {"range": [158, 202], "icon_path": "arrow_s.png"},
-                {"range": [203, 247], "icon_path": "arrow_sw.png"},
-                {"range": [248, 292], "icon_path": "arrow_w.png"},
-                {"range": [293, 337], "icon_path": "arrow_nw.png"}
-            ]
+        {
+          "name": "video.width"
         },
-
-        {"name": "Home label", "type": "TplTextWidget", "x": -158, "y": -110,
-            "template": "HOME",
-            "facts": []
+        {
+          "name": "video.height"
+        }
+      ]
+    },
+    {
+      "name": "DVR status",
+      "type": "DvrStatusWidget",
+      "x": -85,
+      "y": 20,
+      "icon_path": "sdcard-white.png",
+      "text": "REC",
+      "facts": [
+        {
+          "name": "dvr.recording"
+        }
+      ]
+    },
+    {
+      "name": "bg_bottomleft",
+      "type": "BoxWidget",
+      "x": 0,
+      "y": -130,
+      "width": 320,
+      "height": 130,
+      "color": {
+        "r": 0.0,
+        "g": 0.0,
+        "b": 0.0,
+        "alpha": 0.4
+      },
+      "facts": []
+    },
+    {
+      "name": "Altitude",
+      "type": "TplTextWidget",
+      "x": 10,
+      "y": -110,
+      "template": "ALT: %.1f m",
+      "facts": [
+        {
+          "name": "mavlink.vfr_hud.alt"
+        }
+      ]
+    },
+    {
+      "name": "Climb",
+      "type": "TplTextWidget",
+      "x": 10,
+      "y": -85,
+      "template": "VS:  %+.1f m/s",
+      "facts": [
+        {
+          "name": "mavlink.vfr_hud.climb"
+        }
+      ]
+    },
+    {
+      "name": "Ground speed",
+      "type": "TplTextWidget",
+      "x": 10,
+      "y": -60,
+      "template": "SPD: %.1f m/s",
+      "facts": [
+        {
+          "name": "mavlink.vfr_hud.groundspeed"
+        }
+      ]
+    },
+    {
+      "name": "mAh",
+      "type": "TplTextWidget",
+      "x": 10,
+      "y": -35,
+      "template": "mAh: %d",
+      "facts": [
+        {
+          "name": "mavlink.battery_status.current_consumed"
+        }
+      ]
+    },
+    {
+      "name": "Battery",
+      "type": "BatteryCellWidget",
+      "x": 10,
+      "y": -10,
+      "critical_voltage": 3.5,
+      "max_voltage": 4.2,
+      "num_cells": "even",
+      "template": "BAT: %.2f V/cell",
+      "facts": [
+        {
+          "name": "mavlink.sys_status.voltage_battery"
+        }
+      ]
+    },
+    {
+      "name": "bg_bottomright",
+      "type": "BoxWidget",
+      "x": -210,
+      "y": -135,
+      "width": 210,
+      "height": 135,
+      "color": {
+        "r": 0.0,
+        "g": 0.0,
+        "b": 0.0,
+        "alpha": 0.4
+      },
+      "facts": []
+    },
+    {
+      "name": "Home arrow",
+      "type": "IconSelectorWidget",
+      "x": -305,
+      "y": -130,
+      "facts": [
+        {
+          "name": "mavlink.home.bearing_relative"
+        }
+      ],
+      "ranges_and_icons": [
+        {
+          "range": [
+            338,
+            360
+          ],
+          "icon_path": "arrow_n.png"
         },
-
-        {"name": "Heading", "type": "TplTextWidget", "x": -205, "y": -85,
-            "template": "HDG: %d°",
-            "facts": [{"name": "mavlink.vfr_hud.heading"}]
+        {
+          "range": [
+            0,
+            22
+          ],
+          "icon_path": "arrow_n.png"
         },
-
-        {"name": "GPS sats fix", "type": "TplTextWidget", "x": -205, "y": -55,
-            "template": "GPS: %u sats (%u)",
-            "facts": [
-                {"name": "mavlink.gps_raw.satellites_visible"},
-                {"name": "mavlink.gps_raw.fix_type"}
-            ]
+        {
+          "range": [
+            23,
+            67
+          ],
+          "icon_path": "arrow_ne.png"
         },
-
-        {"name": "GPS lat", "type": "TplTextWidget", "x": -205, "y": -33,
-            "template": "LAT: %.7f",
-            "facts": [{"name": "mavlink.global_position_int.lat", "convert": "x / 10000000.0"}]
+        {
+          "range": [
+            68,
+            112
+          ],
+          "icon_path": "arrow_e.png"
         },
-
-        {"name": "GPS lon", "type": "TplTextWidget", "x": -205, "y": -11,
-            "template": "LON: %.7f",
-            "facts": [{"name": "mavlink.global_position_int.lon", "convert": "x / 10000000.0"}]
+        {
+          "range": [
+            113,
+            157
+          ],
+          "icon_path": "arrow_se.png"
         },
-
-        {"name": "Custom message", "type": "PopupWidget",
-            "x": 400, "y": 50,
-            "timeout_ms": 10000,
-            "facts": [{"name": "osd.custom_message"}]
+        {
+          "range": [
+            158,
+            202
+          ],
+          "icon_path": "arrow_s.png"
         },
-
-        {"name": "msposd", "type": "ExternalSurfaceWidget",
-            "x": 0, "y": 0, "width": 0, "height": 0, "facts": []}
-    ]
+        {
+          "range": [
+            203,
+            247
+          ],
+          "icon_path": "arrow_sw.png"
+        },
+        {
+          "range": [
+            248,
+            292
+          ],
+          "icon_path": "arrow_w.png"
+        },
+        {
+          "range": [
+            293,
+            337
+          ],
+          "icon_path": "arrow_nw.png"
+        }
+      ]
+    },
+    {
+      "name": "Home label",
+      "type": "TplTextWidget",
+      "x": -158,
+      "y": -110,
+      "template": "HOME",
+      "facts": []
+    },
+    {
+      "name": "Heading",
+      "type": "TplTextWidget",
+      "x": -205,
+      "y": -85,
+      "template": "HDG: %d\u00b0",
+      "facts": [
+        {
+          "name": "mavlink.vfr_hud.heading"
+        }
+      ]
+    },
+    {
+      "name": "GPS sats fix",
+      "type": "TplTextWidget",
+      "x": -205,
+      "y": -55,
+      "template": "GPS: %u sats (%u)",
+      "facts": [
+        {
+          "name": "mavlink.gps_raw.satellites_visible"
+        },
+        {
+          "name": "mavlink.gps_raw.fix_type"
+        }
+      ]
+    },
+    {
+      "name": "GPS lat",
+      "type": "TplTextWidget",
+      "x": -205,
+      "y": -33,
+      "template": "LAT: %.7f",
+      "facts": [
+        {
+          "name": "mavlink.global_position_int.lat",
+          "convert": "x / 10000000.0"
+        }
+      ]
+    },
+    {
+      "name": "GPS lon",
+      "type": "TplTextWidget",
+      "x": -205,
+      "y": -11,
+      "template": "LON: %.7f",
+      "facts": [
+        {
+          "name": "mavlink.global_position_int.lon",
+          "convert": "x / 10000000.0"
+        }
+      ]
+    },
+    {
+      "name": "Custom message",
+      "type": "PopupWidget",
+      "x": 400,
+      "y": 50,
+      "timeout_ms": 10000,
+      "facts": [
+        {
+          "name": "osd.custom_message"
+        }
+      ]
+    },
+    {
+      "name": "msposd",
+      "type": "ExternalSurfaceWidget",
+      "x": 0,
+      "y": 0,
+      "width": 0,
+      "height": 0,
+      "facts": []
+    }
+  ]
 }

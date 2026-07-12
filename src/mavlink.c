@@ -259,10 +259,8 @@ void* __MAVLINK_THREAD__(void* arg) {
               osd_add_double_fact(batch, "mavlink.vfr_hud.alt", tags, 2, (double) vfr.alt);
               osd_add_double_fact(batch, "mavlink.vfr_hud.climb", tags, 2, (double) vfr.climb);
               osd_add_int_fact(batch, "mavlink.vfr_hud.heading", tags, 2, (long) vfr.heading);
-              /* ArduPilot sends -1 (0xFFFF) at idle; skip publishing so OSD shows "--" */
-              int16_t thr = (int16_t)vfr.throttle;
-              if (thr >= 0)
-                  osd_add_uint_fact(batch, "mavlink.vfr_hud.throttle", tags, 2, (ulong)thr);
+              /* ArduPilot sends -1 (0xFFFF as uint16) at idle; cast signed so OSD shows -1% */
+              osd_add_int_fact(batch, "mavlink.vfr_hud.throttle", tags, 2, (long)(int16_t)vfr.throttle);
               osd_publish_batch(batch);
               g_heading_deg = (long)vfr.heading;
             }

@@ -22,7 +22,7 @@
       "type": "TplTextWidget",
       "x": 10,
       "y": 25,
-      "template": "ARM: %b",
+      "template": "ARM: %s",
       "facts": [
         {
           "name": "mavlink.heartbeet.base_mode.armed"

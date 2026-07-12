@@ -949,7 +949,7 @@ protected:
                         msg << std::fixed << std::setprecision(token.precision) << facts[fact_i].getDoubleValue();
                         break;
                     case TokenType::String:
-                        msg << facts[fact_i].getStrValue();
+                        msg << facts[fact_i].asString();
                         break;
                     }
                 }

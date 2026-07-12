@@ -933,7 +933,7 @@ protected:
             } else {
                 // Check if we have enough facts and if the current fact is defined
                 if (fact_i >= facts.size() || !facts[fact_i].isDefined()) {
-                    msg << '?'; // Append '?' for undefined facts
+                    msg << "--"; // Append '--' for undefined/stale facts (standard FPV OSD convention)
                 } else {
                     switch (token.type) {
                     case TokenType::Boolean:

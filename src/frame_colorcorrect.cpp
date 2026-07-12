@@ -6,8 +6,11 @@
 
 #include "frame_colorcorrect.h"
 
+#include <sys/ioctl.h>
 #include <unistd.h>
 #include <drm_fourcc.h>
+#include <xf86drm.h>
+#include <xf86drmMode.h>
 #include <rga/im2d.h>
 #include <rga/rga.h>
 #include <spdlog/spdlog.h>
@@ -160,9 +163,52 @@ bool FrameColorCorrect::init(int drm_fd, uint32_t width, uint32_t height,
     if (!build_shader())   return false;
     if (!create_targets()) return false;
 
+    nv12_import_works_ = probe_nv12_import();
+    if (!nv12_import_works_)
+        spdlog::info("FrameCC: EGL NV12 DMA-BUF import not supported on this driver; "
+                     "OSD blend will use RGA fallback path");
+
     ready_ = true;
     spdlog::info("FrameCC: ready ({}x{} gain={} offset={})", width_, height_, gain_, offset_);
     return true;
+}
+
+bool FrameColorCorrect::probe_nv12_import() {
+    // Create a minimal dumb buffer and try to import it as NV12 EGLImage.
+    // Panfrost on RK3588 returns EGL_BAD_ALLOC; detect this once at init.
+    struct drm_mode_create_dumb dmcd = {};
+    dmcd.bpp = 8; dmcd.width = 16; dmcd.height = 24;  // 16x16 NV12 (Y+UV stacked)
+    if (ioctl(drm_fd_, DRM_IOCTL_MODE_CREATE_DUMB, &dmcd) < 0)
+        return false;
+
+    struct drm_prime_handle dph = {};
+    dph.handle = dmcd.handle; dph.fd = -1;
+    int r = ioctl(drm_fd_, DRM_IOCTL_PRIME_HANDLE_TO_FD, &dph);
+
+    struct drm_mode_destroy_dumb dmd = {};
+    dmd.handle = dmcd.handle;
+    ioctl(drm_fd_, DRM_IOCTL_MODE_DESTROY_DUMB, &dmd);
+
+    if (r < 0 || dph.fd < 0) return false;
+
+    const EGLint attrs[] = {
+        EGL_WIDTH,  16,
+        EGL_HEIGHT, 16,
+        EGL_LINUX_DRM_FOURCC_EXT,      (EGLint)DRM_FORMAT_NV12,
+        EGL_DMA_BUF_PLANE0_FD_EXT,     dph.fd,
+        EGL_DMA_BUF_PLANE0_OFFSET_EXT, 0,
+        EGL_DMA_BUF_PLANE0_PITCH_EXT,  16,
+        EGL_DMA_BUF_PLANE1_FD_EXT,     dph.fd,
+        EGL_DMA_BUF_PLANE1_OFFSET_EXT, 16 * 16,
+        EGL_DMA_BUF_PLANE1_PITCH_EXT,  16,
+        EGL_NONE
+    };
+    EGLImageKHR img = eglCreateImageKHR_(dpy_, EGL_NO_CONTEXT,
+                                         EGL_LINUX_DMA_BUF_EXT, nullptr, attrs);
+    bool ok = (img != EGL_NO_IMAGE_KHR);
+    if (ok) eglDestroyImageKHR_(dpy_, img);
+    close(dph.fd);
+    return ok;
 }
 
 bool FrameColorCorrect::build_shader() {
@@ -252,6 +298,8 @@ bool FrameColorCorrect::process(int src_fd, uint32_t src_w, uint32_t src_h,
                                  uint32_t src_hs, uint32_t src_vs,
                                  int dst_fd, uint32_t dst_hs, uint32_t dst_vs)
 {
+    if (!nv12_import_works_) return false;
+
     // --- Import NV12 source as EGLImage (two-plane) -------------------------
     EGLint uv_offset = (EGLint)((size_t)src_hs * src_vs);
     const EGLint src_attrs[] = {
@@ -270,7 +318,9 @@ bool FrameColorCorrect::process(int src_fd, uint32_t src_w, uint32_t src_h,
                                              EGL_LINUX_DMA_BUF_EXT,
                                              nullptr, src_attrs);
     if (src_img == EGL_NO_IMAGE_KHR) {
-        spdlog::warn("FrameCC: eglCreateImageKHR for NV12 src failed (0x{:x})", eglGetError());
+        nv12_import_works_ = false;
+        spdlog::warn("FrameCC: eglCreateImageKHR for NV12 src failed (0x{:x}); "
+                     "disabling GL path", eglGetError());
         return false;
     }
 

@@ -60,11 +60,13 @@ private:
     bool create_targets();
     void destroy_targets();
     bool ensure_functions();
+    bool probe_nv12_import();   // returns false if driver can't import NV12 DMA-BUFs
 
     int      drm_fd_{-1};
     uint32_t width_{0}, height_{0};
     float    gain_{1.f}, offset_{0.f};
     bool     ready_{false};
+    bool     nv12_import_works_{true};  // false when driver can't import NV12 DMA-BUFs
 
     gbm_device*  gbm_{nullptr};
     EGLDisplay   dpy_{EGL_NO_DISPLAY};

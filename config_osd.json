@@ -65,6 +65,27 @@
       ]
     },
     {
+      "name": "Compass",
+      "type": "CompassWidget",
+      "x": 860,
+      "y": 390,
+      "radius": 90,
+      "mode": "north_up",
+      "icon": "drone",
+      "icon_color":  { "r": 0.9, "g": 0.15, "b": 0.15 },
+      "show_home": true,
+      "home_color":  { "r": 0.0, "g": 0.85, "b": 0.2 },
+      "show_wind": true,
+      "wind_color":  { "r": 0.2, "g": 0.75, "b": 1.0 },
+      "bg_alpha": 0.75,
+      "facts": [
+        { "name": "mavlink.vfr_hud.heading" },
+        { "name": "mavlink.home.bearing_relative" },
+        { "name": "mavlink.wind.direction" },
+        { "name": "mavlink.wind.speed" }
+      ]
+    },
+    {
       "name": "heading_container",
       "type": "BoxWidgetContainer",
       "x": 560,
@@ -99,12 +120,16 @@
         }
       ]
     },
-//    {
-//      "name": "Debug",
-//      "type": "DebugWidget",
-//      "x": 700,
-//      "y": 10,
-//      "facts": [
+    {
+      "name": "Debug",
+      "type": "DebugWidget",
+      "x": 700,
+      "y": 600,
+      "facts": [
+        { "name": "mavlink.vfr_hud.heading" },
+        { "name": "mavlink.home.bearing_relative" },
+        { "name": "mavlink.wind.direction" },
+        { "name": "mavlink.wind.speed" }
 //        { "name": "mavlink.heartbeet.base_mode.armed" },
 //        { "name": "mavlink.vfr_hud.throttle" },
 //        { "name": "mavlink.attitude.roll",  "convert": "deg(x)" },
@@ -216,8 +241,8 @@
 //        { "name": "wfbcli.tx.packets.injected_bytes.total" },
 //        { "name": "wfbcli.tx.packets.truncated.delta" },
 //        { "name": "wfbcli.tx.packets.truncated.total" }
-//      ]
-//    },
+      ]
+    },
     {
       "name": "gs_topright",
       "type": "BoxWidgetContainer",
@@ -455,26 +480,26 @@
         }
       ]
     },
-    {
-      "name": "Home arrow",
-      "type": "IconSelectorWidget",
-      "x": -305,
-      "y": -130,
-      "facts": [
-        { "name": "mavlink.home.bearing_relative" }
-      ],
-      "ranges_and_icons": [
-        { "range": [338, 360], "icon_path": "arrow_n.png" },
-        { "range": [0,   22],  "icon_path": "arrow_n.png" },
-        { "range": [23,  67],  "icon_path": "arrow_ne.png" },
-        { "range": [68,  112], "icon_path": "arrow_e.png" },
-        { "range": [113, 157], "icon_path": "arrow_se.png" },
-        { "range": [158, 202], "icon_path": "arrow_s.png" },
-        { "range": [203, 247], "icon_path": "arrow_sw.png" },
-        { "range": [248, 292], "icon_path": "arrow_w.png" },
-        { "range": [293, 337], "icon_path": "arrow_nw.png" }
-      ]
-    },
+//    {
+//      "name": "Home arrow",
+//      "type": "IconSelectorWidget",
+//      "x": -305,
+//      "y": -130,
+//      "facts": [
+//        { "name": "mavlink.home.bearing_relative" }
+//      ],
+//      "ranges_and_icons": [
+//        { "range": [338, 360], "icon_path": "arrow_n.png" },
+//        { "range": [0,   22],  "icon_path": "arrow_n.png" },
+//        { "range": [23,  67],  "icon_path": "arrow_ne.png" },
+//        { "range": [68,  112], "icon_path": "arrow_e.png" },
+//        { "range": [113, 157], "icon_path": "arrow_se.png" },
+//        { "range": [158, 202], "icon_path": "arrow_s.png" },
+//        { "range": [203, 247], "icon_path": "arrow_sw.png" },
+//        { "range": [248, 292], "icon_path": "arrow_w.png" },
+//        { "range": [293, 337], "icon_path": "arrow_nw.png" }
+//      ]
+//    },
     {
       "name": "drone_bottomright",
       "type": "BoxWidgetContainer",

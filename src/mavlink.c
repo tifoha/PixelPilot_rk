@@ -23,7 +23,7 @@
 
 #include <math.h>
 
-#include "mavlink/common/mavlink.h"
+#include "mavlink/ardupilotmega/mavlink.h"
 #include "mavlink.h"
 #include "osd.h"
 
@@ -339,6 +339,18 @@ void* __MAVLINK_THREAD__(void* arg) {
               g_home_lat = home.latitude / 1e7;
               g_home_lon = home.longitude / 1e7;
               g_home_valid = 1;
+            }
+            break;
+
+          case MAVLINK_MSG_ID_WIND:
+            {
+              // ArduPilot WIND (168): direction already in degrees from N, FROM convention
+              mavlink_wind_t wind;
+              mavlink_msg_wind_decode(&message, &wind);
+              void *batch = osd_batch_init(2);
+              osd_add_double_fact(batch, "mavlink.wind.direction", NULL, 0, (double)wind.direction);
+              osd_add_double_fact(batch, "mavlink.wind.speed",     NULL, 0, (double)wind.speed);
+              osd_publish_batch(batch);
             }
             break;
 

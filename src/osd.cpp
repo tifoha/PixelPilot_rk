@@ -2090,6 +2090,339 @@ private:
     double home_bearing_ = -999.0;  // sentinel: not yet received
 };
 
+// ----------------------------------------------------------------------------
+// CompassWidget — round compass rose with heading, home direction, wind
+// Facts:
+//   0: mavlink.vfr_hud.heading        (required)
+//   1: mavlink.home.bearing_relative  (optional, degrees relative to heading)
+//   2: mavlink.wind.direction         (optional, degrees from N where wind comes FROM)
+//   3: mavlink.wind.speed             (optional, m/s)
+// Modes:
+//   "north_up"  — ring fixed (N at top), center icon rotates with heading
+//   "track_up"  — center icon always points forward, ring rotates under it
+// Icons (built-in): "arrow" (default), "drone", "plane"
+//   or a path to a PNG file
+// ----------------------------------------------------------------------------
+class CompassWidget : public Widget {
+public:
+    CompassWidget(int pos_x, int pos_y, int radius,
+                  const std::string& mode, const std::string& icon,
+                  double icon_r, double icon_g, double icon_b,
+                  bool show_home, double home_r, double home_g, double home_b,
+                  bool show_wind, double wind_r, double wind_g, double wind_b,
+                  double bg_alpha,
+                  const std::filesystem::path& assets_dir)
+        : Widget(pos_x, pos_y, 0),
+          radius_(radius), mode_(mode), icon_name_(icon),
+          icon_r_(icon_r), icon_g_(icon_g), icon_b_(icon_b),
+          show_home_(show_home), home_r_(home_r), home_g_(home_g), home_b_(home_b),
+          show_wind_(show_wind), wind_r_(wind_r), wind_g_(wind_g), wind_b_(wind_b),
+          bg_alpha_(bg_alpha),
+          assets_dir_(assets_dir) {}
+
+    ~CompassWidget() {
+        if (icon_surface_) cairo_surface_destroy(icon_surface_);
+    }
+
+    void setFact(uint idx, Fact fact) override {
+        if (idx == 0) {
+            if (fact.getType() == Fact::T_INT)
+                heading_ = (int)((fact.getIntValue() % 360 + 360) % 360);
+            else if (fact.getType() == Fact::T_UINT)
+                heading_ = (int)(fact.getUintValue() % 360);
+        } else if (idx == 1) {
+            if (fact.getType() == Fact::T_DOUBLE)     home_bearing_ = fact.getDoubleValue();
+            else if (fact.getType() == Fact::T_INT)   home_bearing_ = (double)fact.getIntValue();
+            else if (fact.getType() == Fact::T_UINT)  home_bearing_ = (double)fact.getUintValue();
+        } else if (idx == 2) {
+            if (fact.getType() == Fact::T_DOUBLE)     wind_dir_ = fact.getDoubleValue();
+            else if (fact.getType() == Fact::T_INT)   wind_dir_ = (double)fact.getIntValue();
+            else if (fact.getType() == Fact::T_UINT)  wind_dir_ = (double)fact.getUintValue();
+        } else if (idx == 3) {
+            if (fact.getType() == Fact::T_DOUBLE)     wind_speed_ = fact.getDoubleValue();
+            else if (fact.getType() == Fact::T_INT)   wind_speed_ = (double)fact.getIntValue();
+            else if (fact.getType() == Fact::T_UINT)  wind_speed_ = (double)fact.getUintValue();
+        } else {
+            spdlog::error("CompassWidget: unexpected setFact idx {}", idx);
+        }
+    }
+
+    void draw(cairo_t *cr) override {
+        auto [ox, oy] = xy(cr);
+        double cx = ox + radius_;
+        double cy = oy + radius_;
+        double r  = (double)radius_;
+        double ring_w = r * 0.18;
+        double r_inner = r - ring_w;
+        double heading_rad = heading_ * M_PI / 180.0;
+
+        cairo_save(cr);
+
+        // --- Background circle ---
+        cairo_arc(cr, cx, cy, r, 0, 2 * M_PI);
+        cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, bg_alpha_);
+        cairo_fill(cr);
+
+        // --- Ring + labels + markers (rotated for track_up) ---
+        cairo_save(cr);
+        if (mode_ == "track_up") {
+            cairo_translate(cr, cx, cy);
+            cairo_rotate(cr, -heading_rad);
+            cairo_translate(cr, -cx, -cy);
+        }
+
+        // Tick marks every 5°, major at every 45°, medium at every 10°
+        for (int b = 0; b < 360; b += 5) {
+            bool major  = (b % 45 == 0);
+            bool medium = (b % 10 == 0);
+            double tick_len = major ? ring_w * 0.65 : (medium ? ring_w * 0.4 : ring_w * 0.22);
+            double alpha = major ? 1.0 : (medium ? 0.7 : 0.45);
+            double lw    = major ? 2.0 : 1.0;
+            double bx = bearing_x(cx, r - 1.0, b);
+            double by = bearing_y(cy, r - 1.0, b);
+            double ex = bearing_x(cx, r - tick_len, b);
+            double ey = bearing_y(cy, r - tick_len, b);
+            cairo_set_source_rgba(cr, 1, 1, 1, alpha);
+            cairo_set_line_width(cr, lw);
+            cairo_move_to(cr, bx, by);
+            cairo_line_to(cr, ex, ey);
+            cairo_stroke(cr);
+        }
+
+        // Cardinal labels: N (white), others (light grey)
+        struct { int b; const char *lbl; bool cardinal; } labels[] = {
+            {0,   "N",  true},
+            {45,  "NE", false},
+            {90,  "E",  true},
+            {135, "SE", false},
+            {180, "S",  true},
+            {225, "SW", false},
+            {270, "W",  true},
+            {315, "NW", false},
+        };
+        double label_r = r_inner - 2.0;
+        for (auto &lb : labels) {
+            double fs   = lb.cardinal ? 14.0 : 10.0;
+            double alpha = lb.cardinal ? 1.0 : 0.75;
+            double lx = bearing_x(cx, label_r, lb.b);
+            double ly = bearing_y(cy, label_r, lb.b);
+            cairo_select_font_face(cr, "Roboto", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+            cairo_set_font_size(cr, fs);
+            cairo_text_extents_t ext;
+            cairo_text_extents(cr, lb.lbl, &ext);
+            // "N" label shifted slightly inward so it doesn't overlap the edge ticks
+            double push_in = lb.cardinal ? 6.0 : 3.0;
+            double dx = -sin(lb.b * M_PI / 180.0) * push_in;
+            double dy =  cos(lb.b * M_PI / 180.0) * push_in;
+            cairo_set_source_rgba(cr, 1, 1, 1, alpha);
+            cairo_move_to(cr, lx - ext.width / 2.0 - ext.x_bearing + dx,
+                              ly + ext.height / 2.0 - ext.height / 2.0 * 0.35 + dy);
+            cairo_show_text(cr, lb.lbl);
+        }
+
+        // Home marker — filled triangle on the inner ring edge pointing inward
+        if (show_home_ && home_bearing_ > -990.0) {
+            double abs_home = fmod(heading_ + home_bearing_ + 3600.0, 360.0);
+            draw_ring_marker(cr, cx, cy, r_inner, abs_home, home_r_, home_g_, home_b_, true);
+        }
+
+        // Wind marker — elongated inward arrow at the "from" direction
+        if (show_wind_ && wind_dir_ > -990.0) {
+            draw_ring_marker(cr, cx, cy, r_inner, wind_dir_, wind_r_, wind_g_, wind_b_, false);
+            // Wind speed label next to marker
+            if (wind_speed_ > -0.5) {
+                char wbuf[16];
+                snprintf(wbuf, sizeof(wbuf), "%.1fm/s", wind_speed_);
+                double wx = bearing_x(cx, r_inner - 18.0, wind_dir_);
+                double wy = bearing_y(cy, r_inner - 18.0, wind_dir_);
+                cairo_select_font_face(cr, "Roboto", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+                cairo_set_font_size(cr, 9.0);
+                cairo_text_extents_t wext;
+                cairo_text_extents(cr, wbuf, &wext);
+                cairo_set_source_rgba(cr, wind_r_, wind_g_, wind_b_, 0.9);
+                cairo_move_to(cr, wx - wext.width / 2.0 - wext.x_bearing, wy + 4.0);
+                cairo_show_text(cr, wbuf);
+            }
+        }
+
+        cairo_restore(cr);  // undo ring rotation
+
+        // --- Center icon ---
+        cairo_save(cr);
+        cairo_translate(cr, cx, cy);
+        if (mode_ == "north_up") cairo_rotate(cr, heading_rad);
+        draw_icon(cr, r_inner * 0.52);
+        cairo_restore(cr);
+
+        // --- Heading text (fixed, always below center) ---
+        char buf[8];
+        snprintf(buf, sizeof(buf), "%d\xc2\xb0", heading_);  // UTF-8 degree sign
+        cairo_select_font_face(cr, "Roboto", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+        cairo_set_font_size(cr, 13.0);
+        cairo_text_extents_t ext;
+        cairo_text_extents(cr, buf, &ext);
+        cairo_set_source_rgba(cr, 1, 1, 1, 1.0);
+        cairo_move_to(cr, cx - ext.width / 2.0 - ext.x_bearing, cy + r_inner * 0.72);
+        cairo_show_text(cr, buf);
+
+        cairo_restore(cr);
+    }
+
+private:
+    // Convert compass bearing (degrees, 0=N, clockwise) to screen x/y on a circle
+    static double bearing_x(double cx, double r, double b) {
+        return cx + r * sin(b * M_PI / 180.0);
+    }
+    static double bearing_y(double cy, double r, double b) {
+        return cy - r * cos(b * M_PI / 180.0);
+    }
+
+    // Small triangle marker pointing inward from the ring at bearing b
+    // triangle=true → filled triangle; false → narrow diamond/arrow
+    void draw_ring_marker(cairo_t *cr, double cx, double cy, double r_inner,
+                          double b, double mr, double mg, double mb, bool triangle) {
+        double br = b * M_PI / 180.0;
+        double sin_b = sin(br), cos_b = cos(br);
+        // Tip at r_inner - 4, base at r_inner + 5 (slightly inside ring outer edge)
+        double tip_r  = r_inner - 5.0;
+        double base_r = r_inner + 4.0;
+        double half_w = triangle ? 6.0 : 3.5;
+
+        // Tip point
+        double tx = cx + tip_r  * sin_b;
+        double ty = cy - tip_r  * cos_b;
+        // Base center
+        double bx = cx + base_r * sin_b;
+        double by = cy - base_r * cos_b;
+        // Perpendicular (tangent) direction
+        double px =  cos_b;
+        double py =  sin_b;
+
+        cairo_set_source_rgba(cr, mr, mg, mb, 1.0);
+        cairo_move_to(cr, tx, ty);
+        cairo_line_to(cr, bx + px * half_w, by + py * half_w);
+        cairo_line_to(cr, bx - px * half_w, by - py * half_w);
+        cairo_close_path(cr);
+        cairo_fill(cr);
+    }
+
+    // Draw center icon centered at (0,0), pointing "up" (toward -Y), size = half-span
+    void draw_icon(cairo_t *cr, double size) {
+        if (!icon_surface_loaded_) {
+            icon_surface_loaded_ = true;
+            // Try to load PNG if icon_name_ looks like a file path
+            if (icon_name_.find('/') != std::string::npos || icon_name_.find('.') != std::string::npos) {
+                std::filesystem::path p = icon_name_;
+                if (p.is_relative()) p = assets_dir_ / p;
+                icon_surface_ = cairo_image_surface_create_from_png(p.c_str());
+                if (cairo_surface_status(icon_surface_) != CAIRO_STATUS_SUCCESS) {
+                    spdlog::warn("CompassWidget: failed to load icon PNG '{}', using built-in arrow", p.string());
+                    cairo_surface_destroy(icon_surface_);
+                    icon_surface_ = nullptr;
+                }
+            }
+        }
+
+        if (icon_surface_) {
+            // Render loaded PNG, scaled to fit 2*size box, centered
+            int iw = cairo_image_surface_get_width(icon_surface_);
+            int ih = cairo_image_surface_get_height(icon_surface_);
+            double scale = (2.0 * size) / std::max(iw, ih);
+            cairo_save(cr);
+            cairo_scale(cr, scale, scale);
+            cairo_set_source_surface(cr, icon_surface_, -iw / 2.0, -ih / 2.0);
+            cairo_paint(cr);
+            cairo_restore(cr);
+            return;
+        }
+
+        cairo_set_source_rgba(cr, icon_r_, icon_g_, icon_b_, 1.0);
+
+        if (icon_name_ == "drone") {
+            draw_icon_drone(cr, size);
+        } else if (icon_name_ == "plane") {
+            draw_icon_plane(cr, size);
+        } else {
+            draw_icon_arrow(cr, size);
+        }
+    }
+
+    // QGC-style navigation arrow: filled chevron, tip at top
+    void draw_icon_arrow(cairo_t *cr, double s) {
+        cairo_move_to(cr,  0,       -s);         // tip
+        cairo_line_to(cr,  s * 0.5,  s * 0.55); // bottom-right
+        cairo_line_to(cr,  0,        s * 0.15);  // center notch
+        cairo_line_to(cr, -s * 0.5,  s * 0.55); // bottom-left
+        cairo_close_path(cr);
+        cairo_fill(cr);
+    }
+
+    // Quadcopter X-frame viewed from above
+    void draw_icon_drone(cairo_t *cr, double s) {
+        // Body
+        cairo_arc(cr, 0, 0, s * 0.22, 0, 2 * M_PI);
+        cairo_fill(cr);
+        // Arms at 45°, 135°, 225°, 315°
+        double arm_angles[] = {45, 135, 225, 315};
+        for (double a : arm_angles) {
+            double ax = s * 0.65 * sin(a * M_PI / 180.0);
+            double ay = -s * 0.65 * cos(a * M_PI / 180.0);
+            cairo_set_line_width(cr, 2.5);
+            cairo_move_to(cr, 0, 0);
+            cairo_line_to(cr, ax, ay);
+            cairo_stroke(cr);
+            // Propeller circle
+            cairo_arc(cr, ax, ay, s * 0.2, 0, 2 * M_PI);
+            cairo_set_line_width(cr, 1.5);
+            cairo_stroke(cr);
+        }
+        // Heading arrow between front arms (pointing forward = up)
+        cairo_move_to(cr,  0,        -s * 0.72);  // tip
+        cairo_line_to(cr,  s * 0.14, -s * 0.44);  // base right
+        cairo_line_to(cr, -s * 0.14, -s * 0.44);  // base left
+        cairo_close_path(cr);
+        cairo_fill(cr);
+    }
+
+    // Fixed-wing plane viewed from above
+    void draw_icon_plane(cairo_t *cr, double s) {
+        // Fuselage
+        cairo_set_line_width(cr, 3.5);
+        cairo_move_to(cr, 0, -s * 0.9);
+        cairo_line_to(cr, 0,  s * 0.5);
+        cairo_stroke(cr);
+        // Main wings
+        cairo_set_line_width(cr, 2.5);
+        cairo_move_to(cr, -s * 0.95, -s * 0.1);
+        cairo_line_to(cr,  s * 0.95, -s * 0.1);
+        cairo_stroke(cr);
+        // Tail
+        cairo_set_line_width(cr, 2.0);
+        cairo_move_to(cr, -s * 0.42, s * 0.38);
+        cairo_line_to(cr,  s * 0.42, s * 0.38);
+        cairo_stroke(cr);
+    }
+
+    int radius_;
+    std::string mode_;
+    std::string icon_name_;
+    double icon_r_, icon_g_, icon_b_;
+    bool show_home_;
+    double home_r_, home_g_, home_b_;
+    bool show_wind_;
+    double wind_r_, wind_g_, wind_b_;
+    double bg_alpha_;
+    std::filesystem::path assets_dir_;
+
+    int    heading_    = 0;
+    double home_bearing_ = -999.0;
+    double wind_dir_   = -999.0;
+    double wind_speed_ = -1.0;
+
+    cairo_surface_t *icon_surface_ = nullptr;
+    bool icon_surface_loaded_ = false;
+};
+
 class Osd {
 public:
 	void loadConfig(json cfg) {
@@ -2385,6 +2718,34 @@ private:
 			}
 			return {new HeadingTapeWidget(x, y, w, h, r, lpos, sdeg, dint, tch, tih, tmh, tsh,
 			                             cr_, cg_, cb_, show_home, hr_, hg_, hb_), matchers};
+		} else if (type == "CompassWidget") {
+			int rad = widget_j.value("radius", 80);
+			std::string cmode = widget_j.value("mode", "north_up");
+			std::string icon  = widget_j.value("icon", "arrow");
+			// Icon color (default: red)
+			double ir = 0.9, ig = 0.15, ib = 0.15;
+			if (widget_j.contains("icon_color")) {
+				auto ic = widget_j.at("icon_color");
+				ir = ic.value("r", 0.9); ig = ic.value("g", 0.15); ib = ic.value("b", 0.15);
+			}
+			// Home marker (default: green)
+			bool sh = widget_j.value("show_home", true);
+			double hr2 = 0.0, hg2 = 0.85, hb2 = 0.2;
+			if (widget_j.contains("home_color")) {
+				auto hc = widget_j.at("home_color");
+				hr2 = hc.value("r", 0.0); hg2 = hc.value("g", 0.85); hb2 = hc.value("b", 0.2);
+			}
+			// Wind marker (default: cyan)
+			bool sw = widget_j.value("show_wind", true);
+			double wr = 0.2, wg = 0.75, wb = 1.0;
+			if (widget_j.contains("wind_color")) {
+				auto wc = widget_j.at("wind_color");
+				wr = wc.value("r", 0.2); wg = wc.value("g", 0.75); wb = wc.value("b", 1.0);
+			}
+			double bg_alpha = widget_j.value("bg_alpha", 0.75);
+			return {new CompassWidget(x, y, rad, cmode, icon,
+			                         ir, ig, ib, sh, hr2, hg2, hb2, sw, wr, wg, wb,
+			                         bg_alpha, assets_dir), matchers};
 		} else {
 			spdlog::warn("Widget '{}': unknown type: {}", name, type);
 			return {nullptr, {}};

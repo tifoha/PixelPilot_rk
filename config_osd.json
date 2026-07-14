@@ -3,8 +3,8 @@
   "assets_dir": "/usr/share/pixelpilot/",
   "widgets": [
     {
-      "name": "bg_topleft",
-      "type": "BoxWidget",
+      "name": "drone_topleft",
+      "type": "BoxWidgetContainer",
       "x": 0,
       "y": 0,
       "width": 300,
@@ -15,298 +15,325 @@
         "b": 0.0,
         "alpha": 0.4
       },
-      "facts": []
-    },
-    {
-      "name": "Armed",
-      "type": "TplTextWidget",
-      "x": 10,
-      "y": 25,
-      "template": "ARM: %s",
-      "facts": [
+      "facts": [],
+      "widgets": [
         {
-          "name": "mavlink.heartbeet.base_mode.armed"
-        }
-      ]
-    },
-    {
-      "name": "Throttle",
-      "type": "TplTextWidget",
-      "x": 10,
-      "y": 50,
-      "template": "THR: %i%%",
-      "facts": [
-        {
-          "name": "mavlink.vfr_hud.throttle"
-        }
-      ]
-    },
-    {
-      "name": "Roll",
-      "type": "TplTextWidget",
-      "x": 10,
-      "y": 75,
-      "template": "R:%+.1f  P:%+.1f",
-      "facts": [
-        {
-          "name": "mavlink.attitude.roll",
-          "convert": "x * 57.2958"
+          "name": "Armed",
+          "type": "TplTextWidget",
+          "x": 10,
+          "y": 25,
+          "template": "ARM: %s",
+          "facts": [
+            {
+              "name": "mavlink.heartbeet.base_mode.armed"
+            }
+          ]
         },
         {
-          "name": "mavlink.attitude.pitch",
-          "convert": "x * 57.2958"
+          "name": "Throttle",
+          "type": "TplTextWidget",
+          "x": 10,
+          "y": 50,
+          "template": "THR: %i%%",
+          "facts": [
+            {
+              "name": "mavlink.vfr_hud.throttle"
+            }
+          ]
+        },
+        {
+          "name": "Roll",
+          "type": "TplTextWidget",
+          "x": 10,
+          "y": 75,
+          "template": "R:%+.1f  P:%+.1f  Y:%.0f",
+          "facts": [
+            {
+              "name": "mavlink.attitude.roll",
+              "convert": "deg(x)"
+            },
+            {
+              "name": "mavlink.attitude.pitch",
+              "convert": "deg(x)"
+            },
+            {
+              "name": "mavlink.attitude.yaw",
+              "convert": "norm(deg(x), 360)"
+            }
+          ]
         }
       ]
     },
+//    {
+//      "name": "Debug",
+//      "type": "DebugWidget",
+//      "x": 700,
+//      "y": 10,
+//      "facts": [
+//        { "name": "mavlink.heartbeet.base_mode.armed" },
+//        { "name": "mavlink.vfr_hud.throttle" },
+//        { "name": "mavlink.attitude.roll",  "convert": "deg(x)" },
+//        { "name": "mavlink.attitude.pitch", "convert": "deg(x)" },
+//        { "name": "mavlink.attitude.yaw",   "convert": "norm(deg(x), 360)" },
+//        { "name": "wfbcli.rx.ant_stats.rssi_avg", "tags": { "ant_id": "0" } },
+//        { "name": "wfbcli.rx.ant_stats.rssi_avg", "tags": { "ant_id": "1" } },
+//        { "name": "os_mon.cpu.load_total" },
+//        { "name": "os_mon.mem.used_pct" },
+//        { "name": "gstreamer.received_bytes" },
+//        { "name": "video.index" },
+//        { "name": "video.displayed_frame" },
+//        { "name": "video.width" },
+//        { "name": "video.height" },
+//        { "name": "video.decode_and_handover_ms" },
+//        { "name": "dvr.recording" },
+//        { "name": "mavlink.vfr_hud.alt" },
+//        { "name": "mavlink.vfr_hud.climb" },
+//        { "name": "mavlink.vfr_hud.groundspeed" },
+//        { "name": "mavlink.battery_status.current_consumed" },
+//        { "name": "mavlink.sys_status.voltage_battery", "convert": "x / 1000.0" },
+//        { "name": "mavlink.vfr_hud.heading" },
+//        { "name": "mavlink.gps_raw.satellites_visible" },
+//        { "name": "mavlink.gps_raw.fix_type" },
+//        { "name": "mavlink.global_position_int.lat", "convert": "x / 10000000.0" },
+//        { "name": "mavlink.global_position_int.lon", "convert": "x / 10000000.0" },
+//        { "name": "mavlink.home.bearing_relative" },
+//        { "name": "osd.custom_message" },
+//        { "name": "mavlink.vfr_hud.airspeed" },
+//        { "name": "mavlink.attitude.rollspeed",  "convert": "deg(x)" },
+//        { "name": "mavlink.attitude.pitchpeed",  "convert": "deg(x)" },
+//        { "name": "mavlink.attitude.yawspeed",   "convert": "deg(x)" },
+//        { "name": "mavlink.battery_status.energy_consumed" },
+//        { "name": "mavlink.calculated.radio_status.snr" },
+//        { "name": "mavlink.global_position_int.alt",          "convert": "x / 1000.0" },
+//        { "name": "mavlink.global_position_int.hdg",          "convert": "x / 100.0" },
+//        { "name": "mavlink.global_position_int.relative_alt", "convert": "x / 1000.0" },
+//        { "name": "mavlink.global_position_int.vx", "convert": "x / 100.0" },
+//        { "name": "mavlink.global_position_int.vy", "convert": "x / 100.0" },
+//        { "name": "mavlink.global_position_int.vz", "convert": "x / 100.0" },
+//        { "name": "mavlink.gps_raw.alt", "convert": "x / 1000.0" },
+//        { "name": "mavlink.gps_raw.cog", "convert": "x / 100.0" },
+//        { "name": "mavlink.gps_raw.lat", "convert": "x / 10000000.0" },
+//        { "name": "mavlink.gps_raw.lon", "convert": "x / 10000000.0" },
+//        { "name": "mavlink.gps_raw.vel", "convert": "x / 100.0" },
+//        { "name": "mavlink.radio_status.rssi" },
+//        { "name": "mavlink.radio_status.remrssi" },
+//        { "name": "mavlink.radio_status.noise" },
+//        { "name": "mavlink.radio_status.remnoise" },
+//        { "name": "mavlink.radio_status.rxerrors" },
+//        { "name": "mavlink.radio_status.fixed" },
+//        { "name": "mavlink.raw_imu.xacc" },
+//        { "name": "mavlink.raw_imu.yacc" },
+//        { "name": "mavlink.raw_imu.zacc" },
+//        { "name": "mavlink.raw_imu.xgyro" },
+//        { "name": "mavlink.raw_imu.ygyro" },
+//        { "name": "mavlink.raw_imu.zgyro" },
+//        { "name": "mavlink.raw_imu.temperature", "convert": "x / 100.0" },
+//        { "name": "mavlink.rc_channels_raw.chan1" },
+//        { "name": "mavlink.rc_channels_raw.chan2" },
+//        { "name": "mavlink.rc_channels_raw.chan3" },
+//        { "name": "mavlink.rc_channels_raw.chan4" },
+//        { "name": "mavlink.rc_channels_raw.chan5" },
+//        { "name": "mavlink.rc_channels_raw.chan6" },
+//        { "name": "mavlink.rc_channels_raw.chan7" },
+//        { "name": "mavlink.rc_channels_raw.chan8" },
+//        { "name": "mavlink.sys_status.current_battery" },
+//        { "name": "os_mon.cpu.load_iowait" },
+//        { "name": "os_mon.power.current" },
+//        { "name": "os_mon.power.power" },
+//        { "name": "os_mon.power.voltage" },
+//        { "name": "os_mon.temperature" },
+//        { "name": "video.decoder_feed_time_ms" },
+//        { "name": "wfbcli.cli_title" },
+//        { "name": "wfbcli.is_cluster" },
+//        { "name": "wfbcli.temp_overheat_warning" },
+//        { "name": "wfbcli.rf_temperature", "tags": { "ant_id": "0" } },
+//        { "name": "wfbcli.rf_temperature", "tags": { "ant_id": "1" } },
+//        { "name": "wfbcli.rx.ant_stats.freq",     "tags": { "ant_id": "0" } },
+//        { "name": "wfbcli.rx.ant_stats.freq",     "tags": { "ant_id": "1" } },
+//        { "name": "wfbcli.rx.ant_stats.mcs",      "tags": { "ant_id": "0" } },
+//        { "name": "wfbcli.rx.ant_stats.mcs",      "tags": { "ant_id": "1" } },
+//        { "name": "wfbcli.rx.ant_stats.bw",       "tags": { "ant_id": "0" } },
+//        { "name": "wfbcli.rx.ant_stats.bw",       "tags": { "ant_id": "1" } },
+//        { "name": "wfbcli.rx.ant_stats.pkt_recv", "tags": { "ant_id": "0" } },
+//        { "name": "wfbcli.rx.ant_stats.pkt_recv", "tags": { "ant_id": "1" } },
+//        { "name": "wfbcli.rx.ant_stats.rssi_min", "tags": { "ant_id": "0" } },
+//        { "name": "wfbcli.rx.ant_stats.rssi_min", "tags": { "ant_id": "1" } },
+//        { "name": "wfbcli.rx.ant_stats.rssi_max", "tags": { "ant_id": "0" } },
+//        { "name": "wfbcli.rx.ant_stats.rssi_max", "tags": { "ant_id": "1" } },
+//        { "name": "wfbcli.rx.ant_stats.snr_avg",  "tags": { "ant_id": "0" } },
+//        { "name": "wfbcli.rx.ant_stats.snr_avg",  "tags": { "ant_id": "1" } },
+//        { "name": "wfbcli.rx.ant_stats.snr_min",  "tags": { "ant_id": "0" } },
+//        { "name": "wfbcli.rx.ant_stats.snr_min",  "tags": { "ant_id": "1" } },
+//        { "name": "wfbcli.rx.ant_stats.snr_max",  "tags": { "ant_id": "0" } },
+//        { "name": "wfbcli.rx.ant_stats.snr_max",  "tags": { "ant_id": "1" } },
+//        { "name": "wfbcli.rx.packets.all.total" },
+//        { "name": "wfbcli.tx.packets.dropped.delta" },
+//        { "name": "wfbcli.tx.packets.dropped.total" },
+//        { "name": "wfbcli.tx.packets.fec_timeouts.delta" },
+//        { "name": "wfbcli.tx.packets.fec_timeouts.total" },
+//        { "name": "wfbcli.tx.packets.incoming.delta" },
+//        { "name": "wfbcli.tx.packets.incoming.total" },
+//        { "name": "wfbcli.tx.packets.incoming_bytes.delta" },
+//        { "name": "wfbcli.tx.packets.incoming_bytes.total" },
+//        { "name": "wfbcli.tx.packets.injected.delta" },
+//        { "name": "wfbcli.tx.packets.injected.total" },
+//        { "name": "wfbcli.tx.packets.injected_bytes.delta" },
+//        { "name": "wfbcli.tx.packets.injected_bytes.total" },
+//        { "name": "wfbcli.tx.packets.truncated.delta" },
+//        { "name": "wfbcli.tx.packets.truncated.total" }
+//      ]
+//    },
     {
-      "name": "bg_topright",
-      "type": "BoxWidget",
-      "x": -310,
+      "name": "gs_topright",
+      "type": "BoxWidgetContainer",
+      "x": -400,
       "y": 0,
-      "width": 310,
-      "height": 170,
+      "width": 400,
+      "height": 195,
       "color": {
         "r": 0.0,
         "g": 0.0,
         "b": 0.0,
         "alpha": 0.4
       },
-      "facts": []
-    },
-    {
-      "name": "GS label",
-      "type": "TplTextWidget",
-      "x": -295,
-      "y": 18,
-      "template": "GS",
-      "facts": []
-    },
-    {
-      "name": "Signal ant1",
-      "type": "IconSelectorWidget",
-      "x": -295,
-      "y": 28,
-      "facts": [
+      "facts": [],
+      "widgets": [
         {
-          "name": "wfbcli.rx.ant_stats.rssi_avg",
-          "tags": {
-            "ant_id": "0",
-            "id": "video rx"
-          }
-        }
-      ],
-      "ranges_and_icons": [
+          "name": "GS label",
+          "type": "TplTextWidget",
+          "x": 15,
+          "y": 18,
+          "template": "GS",
+          "facts": []
+        },
         {
-          "range": [
-            -40,
-            30
+          "name": "Signal ant1",
+          "type": "IconSelectorWidget",
+          "x": 15,
+          "y": 28,
+          "facts": [
+            {
+              "name": "wfbcli.rx.ant_stats.rssi_avg",
+              "tags": {
+                "ant_id": "0",
+                "id": "video rx"
+              }
+            }
           ],
-          "icon_path": "signal1.png"
+          "ranges_and_icons": [
+            { "range": [-40, 30],   "icon_path": "signal1.png" },
+            { "range": [-48, -41],  "icon_path": "signal2.png" },
+            { "range": [-56, -49],  "icon_path": "signal3.png" },
+            { "range": [-64, -57],  "icon_path": "signal4.png" },
+            { "range": [-72, -65],  "icon_path": "signal5.png" },
+            { "range": [-80, -73],  "icon_path": "signal6.png" },
+            { "range": [-90, -81],  "icon_path": "signal7.png" },
+            { "range": [-130, -91], "icon_path": "signal8.png" }
+          ]
         },
         {
-          "range": [
-            -48,
-            -41
+          "name": "Signal ant2",
+          "type": "IconSelectorWidget",
+          "x": 60,
+          "y": 28,
+          "facts": [
+            {
+              "name": "wfbcli.rx.ant_stats.rssi_avg",
+              "tags": {
+                "ant_id": "1",
+                "id": "video rx"
+              }
+            }
           ],
-          "icon_path": "signal2.png"
+          "ranges_and_icons": [
+            { "range": [-40, 30],   "icon_path": "signal1.png" },
+            { "range": [-48, -41],  "icon_path": "signal2.png" },
+            { "range": [-56, -49],  "icon_path": "signal3.png" },
+            { "range": [-64, -57],  "icon_path": "signal4.png" },
+            { "range": [-72, -65],  "icon_path": "signal5.png" },
+            { "range": [-80, -73],  "icon_path": "signal6.png" },
+            { "range": [-90, -81],  "icon_path": "signal7.png" },
+            { "range": [-130, -91], "icon_path": "signal8.png" }
+          ]
         },
         {
-          "range": [
-            -56,
-            -49
-          ],
-          "icon_path": "signal3.png"
+          "name": "RSSI ant1",
+          "type": "TplTextWidget",
+          "x": 15,
+          "y": 84,
+          "template": "%d",
+          "facts": [
+            {
+              "name": "wfbcli.rx.ant_stats.rssi_avg",
+              "tags": { "ant_id": "0", "id": "video rx" }
+            }
+          ]
         },
         {
-          "range": [
-            -64,
-            -57
-          ],
-          "icon_path": "signal4.png"
+          "name": "RSSI ant2",
+          "type": "TplTextWidget",
+          "x": 60,
+          "y": 84,
+          "template": "%d",
+          "facts": [
+            {
+              "name": "wfbcli.rx.ant_stats.rssi_avg",
+              "tags": { "ant_id": "1", "id": "video rx" }
+            }
+          ]
         },
         {
-          "range": [
-            -72,
-            -65
-          ],
-          "icon_path": "signal5.png"
+          "name": "CPU MEM",
+          "type": "TplTextWidget",
+          "x": 15,
+          "y": 107,
+          "template": "CPU:%u%% MEM:%u%%",
+          "facts": [
+            { "name": "os_mon.cpu.load_total" },
+            { "name": "os_mon.mem.used_pct" }
+          ]
         },
         {
-          "range": [
-            -80,
-            -73
-          ],
-          "icon_path": "signal6.png"
+          "name": "Video bitrate",
+          "type": "VideoBitrateWidget",
+          "x": 15,
+          "y": 132,
+          "icon_path": "network.png",
+          "template": "%f Mbps",
+          "per_second_window_s": 2,
+          "per_second_bucket_ms": 100,
+          "facts": [
+            { "name": "gstreamer.received_bytes" }
+          ]
         },
         {
-          "range": [
-            -90,
-            -81
-          ],
-          "icon_path": "signal7.png"
+          "name": "Video FPS",
+          "type": "VideoWidget",
+          "x": 15,
+          "y": 157,
+          "icon_path": "framerate.png",
+          "template": "V%u | %u fps | %ux%u",
+          "per_second_window_s": 2,
+          "per_second_bucket_ms": 200,
+          "facts": [
+            { "name": "video.index" },
+            { "name": "video.displayed_frame" },
+            { "name": "video.width" },
+            { "name": "video.height" }
+          ]
         },
         {
-          "range": [
-            -130,
-            -91
-          ],
-          "icon_path": "signal8.png"
-        }
-      ]
-    },
-    {
-      "name": "Signal ant2",
-      "type": "IconSelectorWidget",
-      "x": -250,
-      "y": 28,
-      "facts": [
-        {
-          "name": "wfbcli.rx.ant_stats.rssi_avg",
-          "tags": {
-            "ant_id": "1",
-            "id": "video rx"
-          }
-        }
-      ],
-      "ranges_and_icons": [
-        {
-          "range": [
-            -40,
-            30
-          ],
-          "icon_path": "signal1.png"
-        },
-        {
-          "range": [
-            -48,
-            -41
-          ],
-          "icon_path": "signal2.png"
-        },
-        {
-          "range": [
-            -56,
-            -49
-          ],
-          "icon_path": "signal3.png"
-        },
-        {
-          "range": [
-            -64,
-            -57
-          ],
-          "icon_path": "signal4.png"
-        },
-        {
-          "range": [
-            -72,
-            -65
-          ],
-          "icon_path": "signal5.png"
-        },
-        {
-          "range": [
-            -80,
-            -73
-          ],
-          "icon_path": "signal6.png"
-        },
-        {
-          "range": [
-            -90,
-            -81
-          ],
-          "icon_path": "signal7.png"
-        },
-        {
-          "range": [
-            -130,
-            -91
-          ],
-          "icon_path": "signal8.png"
-        }
-      ]
-    },
-    {
-      "name": "RSSI ant1",
-      "type": "TplTextWidget",
-      "x": -295,
-      "y": 84,
-      "template": "%d",
-      "facts": [
-        {
-          "name": "wfbcli.rx.ant_stats.rssi_avg",
-          "tags": {
-            "ant_id": "0",
-            "id": "video rx"
-          }
-        }
-      ]
-    },
-    {
-      "name": "RSSI ant2",
-      "type": "TplTextWidget",
-      "x": -250,
-      "y": 84,
-      "template": "%d",
-      "facts": [
-        {
-          "name": "wfbcli.rx.ant_stats.rssi_avg",
-          "tags": {
-            "ant_id": "1",
-            "id": "video rx"
-          }
-        }
-      ]
-    },
-    {
-      "name": "CPU MEM",
-      "type": "TplTextWidget",
-      "x": -295,
-      "y": 107,
-      "template": "CPU:%u%% MEM:%u%%",
-      "facts": [
-        {
-          "name": "os_mon.cpu.load_total"
-        },
-        {
-          "name": "os_mon.mem.used_pct"
-        }
-      ]
-    },
-    {
-      "name": "Video bitrate",
-      "type": "VideoBitrateWidget",
-      "x": -295,
-      "y": 132,
-      "icon_path": "network.png",
-      "template": "%f Mbps",
-      "per_second_window_s": 2,
-      "per_second_bucket_ms": 100,
-      "facts": [
-        {
-          "name": "gstreamer.received_bytes"
-        }
-      ]
-    },
-    {
-      "name": "Video FPS",
-      "type": "VideoWidget",
-      "x": -295,
-      "y": 157,
-      "icon_path": "framerate.png",
-      "template": "%u fps | %ux%u",
-      "per_second_window_s": 2,
-      "per_second_bucket_ms": 200,
-      "facts": [
-        {
-          "name": "video.displayed_frame"
-        },
-        {
-          "name": "video.width"
-        },
-        {
-          "name": "video.height"
+          "name": "Decode latency",
+          "type": "VideoDecodeLatencyWidget",
+          "x": 15,
+          "y": 182,
+          "icon_path": "latency.png",
+          "template": "%fms avg|%ims min|%ims max",
+          "per_second_window_s": 2,
+          "per_second_bucket_ms": 200,
+          "facts": [
+            { "name": "video.decode_and_handover_ms" }
+          ]
         }
       ]
     },
@@ -324,8 +351,8 @@
       ]
     },
     {
-      "name": "bg_bottomleft",
-      "type": "BoxWidget",
+      "name": "drone_bottomleft",
+      "type": "BoxWidgetContainer",
       "x": 0,
       "y": -130,
       "width": 320,
@@ -336,74 +363,86 @@
         "b": 0.0,
         "alpha": 0.4
       },
-      "facts": []
-    },
-    {
-      "name": "Altitude",
-      "type": "TplTextWidget",
-      "x": 10,
-      "y": -110,
-      "template": "ALT: %.1f m",
-      "facts": [
+      "facts": [],
+      "widgets": [
         {
-          "name": "mavlink.vfr_hud.alt"
+          "name": "Altitude",
+          "type": "TplTextWidget",
+          "x": 10,
+          "y": 20,
+          "template": "ALT: %.1f m",
+          "facts": [
+            { "name": "mavlink.vfr_hud.alt" }
+          ]
+        },
+        {
+          "name": "Climb",
+          "type": "TplTextWidget",
+          "x": 10,
+          "y": 45,
+          "template": "VS:  %+.1f m/s",
+          "facts": [
+            { "name": "mavlink.vfr_hud.climb" }
+          ]
+        },
+        {
+          "name": "Ground speed",
+          "type": "TplTextWidget",
+          "x": 10,
+          "y": 70,
+          "template": "SPD: %.1f m/s",
+          "facts": [
+            { "name": "mavlink.vfr_hud.groundspeed" }
+          ]
+        },
+        {
+          "name": "mAh",
+          "type": "TplTextWidget",
+          "x": 10,
+          "y": 95,
+          "template": "mAh: %d",
+          "facts": [
+            { "name": "mavlink.battery_status.current_consumed" }
+          ]
+        },
+        {
+          "name": "Battery",
+          "type": "BatteryCellWidget",
+          "x": 10,
+          "y": 120,
+          "critical_voltage": 3.5,
+          "max_voltage": 4.2,
+          "num_cells": "even",
+          "template": "CELL: %.2f V/cell",
+          "facts": [
+            { "name": "mavlink.sys_status.voltage_battery" }
+          ]
         }
       ]
     },
     {
-      "name": "Climb",
-      "type": "TplTextWidget",
-      "x": 10,
-      "y": -85,
-      "template": "VS:  %+.1f m/s",
+      "name": "Home arrow",
+      "type": "IconSelectorWidget",
+      "x": -305,
+      "y": -130,
       "facts": [
-        {
-          "name": "mavlink.vfr_hud.climb"
-        }
+        { "name": "mavlink.home.bearing_relative" }
+      ],
+      "ranges_and_icons": [
+        { "range": [338, 360], "icon_path": "arrow_n.png" },
+        { "range": [0,   22],  "icon_path": "arrow_n.png" },
+        { "range": [23,  67],  "icon_path": "arrow_ne.png" },
+        { "range": [68,  112], "icon_path": "arrow_e.png" },
+        { "range": [113, 157], "icon_path": "arrow_se.png" },
+        { "range": [158, 202], "icon_path": "arrow_s.png" },
+        { "range": [203, 247], "icon_path": "arrow_sw.png" },
+        { "range": [248, 292], "icon_path": "arrow_w.png" },
+        { "range": [293, 337], "icon_path": "arrow_nw.png" }
       ]
     },
     {
-      "name": "Ground speed",
-      "type": "TplTextWidget",
-      "x": 10,
-      "y": -60,
-      "template": "SPD: %.1f m/s",
-      "facts": [
-        {
-          "name": "mavlink.vfr_hud.groundspeed"
-        }
-      ]
-    },
-    {
-      "name": "mAh",
-      "type": "TplTextWidget",
-      "x": 10,
-      "y": -35,
-      "template": "mAh: %d",
-      "facts": [
-        {
-          "name": "mavlink.battery_status.current_consumed"
-        }
-      ]
-    },
-    {
-      "name": "Battery",
-      "type": "BatteryCellWidget",
-      "x": 10,
-      "y": -10,
-      "critical_voltage": 3.5,
-      "max_voltage": 4.2,
-      "num_cells": "even",
-      "template": "BAT: %.2f V/cell",
-      "facts": [
-        {
-          "name": "mavlink.sys_status.voltage_battery"
-        }
-      ]
-    },
-    {
-      "name": "bg_bottomright",
-      "type": "BoxWidget",
+      "name": "drone_bottomright",
+      "type": "BoxWidgetContainer",
       "x": -210,
       "y": -135,
       "width": 210,
@@ -414,142 +453,62 @@
         "b": 0.0,
         "alpha": 0.4
       },
-      "facts": []
-    },
-    {
-      "name": "Home arrow",
-      "type": "IconSelectorWidget",
-      "x": -305,
-      "y": -130,
-      "facts": [
+      "facts": [],
+      "widgets": [
         {
-          "name": "mavlink.home.bearing_relative"
-        }
-      ],
-      "ranges_and_icons": [
-        {
-          "range": [
-            338,
-            360
-          ],
-          "icon_path": "arrow_n.png"
+          "name": "Home label",
+          "type": "TplTextWidget",
+          "x": 52,
+          "y": 25,
+          "template": "HOME",
+          "facts": []
         },
         {
-          "range": [
-            0,
-            22
-          ],
-          "icon_path": "arrow_n.png"
+          "name": "Heading",
+          "type": "TplTextWidget",
+          "x": 5,
+          "y": 50,
+          "template": "HDG: %d\u00b0",
+          "facts": [
+            { "name": "mavlink.vfr_hud.heading" }
+          ]
         },
         {
-          "range": [
-            23,
-            67
-          ],
-          "icon_path": "arrow_ne.png"
+          "name": "GPS sats fix",
+          "type": "TplTextWidget",
+          "x": 5,
+          "y": 80,
+          "template": "GPS: %u sats (%u)",
+          "facts": [
+            { "name": "mavlink.gps_raw.satellites_visible" },
+            { "name": "mavlink.gps_raw.fix_type" }
+          ]
         },
         {
-          "range": [
-            68,
-            112
-          ],
-          "icon_path": "arrow_e.png"
+          "name": "GPS lat",
+          "type": "TplTextWidget",
+          "x": 5,
+          "y": 102,
+          "template": "LAT: %.7f",
+          "facts": [
+            {
+              "name": "mavlink.global_position_int.lat",
+              "convert": "x / 10000000.0"
+            }
+          ]
         },
         {
-          "range": [
-            113,
-            157
-          ],
-          "icon_path": "arrow_se.png"
-        },
-        {
-          "range": [
-            158,
-            202
-          ],
-          "icon_path": "arrow_s.png"
-        },
-        {
-          "range": [
-            203,
-            247
-          ],
-          "icon_path": "arrow_sw.png"
-        },
-        {
-          "range": [
-            248,
-            292
-          ],
-          "icon_path": "arrow_w.png"
-        },
-        {
-          "range": [
-            293,
-            337
-          ],
-          "icon_path": "arrow_nw.png"
-        }
-      ]
-    },
-    {
-      "name": "Home label",
-      "type": "TplTextWidget",
-      "x": -158,
-      "y": -110,
-      "template": "HOME",
-      "facts": []
-    },
-    {
-      "name": "Heading",
-      "type": "TplTextWidget",
-      "x": -205,
-      "y": -85,
-      "template": "HDG: %d\u00b0",
-      "facts": [
-        {
-          "name": "mavlink.vfr_hud.heading"
-        }
-      ]
-    },
-    {
-      "name": "GPS sats fix",
-      "type": "TplTextWidget",
-      "x": -205,
-      "y": -55,
-      "template": "GPS: %u sats (%u)",
-      "facts": [
-        {
-          "name": "mavlink.gps_raw.satellites_visible"
-        },
-        {
-          "name": "mavlink.gps_raw.fix_type"
-        }
-      ]
-    },
-    {
-      "name": "GPS lat",
-      "type": "TplTextWidget",
-      "x": -205,
-      "y": -33,
-      "template": "LAT: %.7f",
-      "facts": [
-        {
-          "name": "mavlink.global_position_int.lat",
-          "convert": "x / 10000000.0"
-        }
-      ]
-    },
-    {
-      "name": "GPS lon",
-      "type": "TplTextWidget",
-      "x": -205,
-      "y": -11,
-      "template": "LON: %.7f",
-      "facts": [
-        {
-          "name": "mavlink.global_position_int.lon",
-          "convert": "x / 10000000.0"
+          "name": "GPS lon",
+          "type": "TplTextWidget",
+          "x": 5,
+          "y": 124,
+          "template": "LON: %.7f",
+          "facts": [
+            {
+              "name": "mavlink.global_position_int.lon",
+              "convert": "x / 10000000.0"
+            }
+          ]
         }
       ]
     },

@@ -64,6 +64,41 @@
         }
       ]
     },
+    {
+      "name": "heading_container",
+      "type": "BoxWidgetContainer",
+      "x": 560,
+      "y": 30,
+      "width": 800,
+      "height": 60,
+      "color": { "r": 0.0, "g": 0.0, "b": 0.0, "alpha": 0.4 },
+      "facts": [],
+      "widgets": [
+        {
+          "name": "Heading",
+          "type": "HeadingTapeWidget",
+          "x": 0,
+          "y": 0,
+          "width": 800,
+          "height": 60,
+          "range": 360,
+          "label_position": "top",
+          "show_degrees": true,
+          "degree_interval": 30,
+          "tick_cardinal_h": 35,
+          "tick_intercardinal_h": 22,
+          "tick_medium_h": 12,
+          "tick_small_h": 6,
+          "center_color": { "r": 1.0, "g": 0.85, "b": 0.0 },
+          "show_home": true,
+          "home_color": { "r": 0.0, "g": 0.85, "b": 0.2 },
+          "facts": [
+            { "name": "mavlink.vfr_hud.heading" },
+            { "name": "mavlink.home.bearing_relative" }
+          ]
+        }
+      ]
+    },
 //    {
 //      "name": "Debug",
 //      "type": "DebugWidget",

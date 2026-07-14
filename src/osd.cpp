@@ -1855,6 +1855,241 @@ private:
     cairo_surface_t* current_icon = nullptr; // Currently selected icon
 };
 
+class HeadingTapeWidget : public Widget {
+public:
+    // label_position: "top" | "middle" | "bottom" — where labels sit inside the tape
+    // show_degrees: also label non-cardinal/intercardinal ticks with degree numbers
+    // degree_interval: spacing of degree labels (only when show_degrees is true)
+    // tick_*_h: pixel height of each tick category
+    HeadingTapeWidget(int pos_x, int pos_y, int width, int height, int range_deg,
+                      const std::string& label_pos, bool show_degrees, int degree_interval,
+                      int tick_cardinal_h, int tick_intercardinal_h,
+                      int tick_medium_h, int tick_small_h,
+                      double center_r, double center_g, double center_b,
+                      bool show_home, double home_r, double home_g, double home_b)
+        : Widget(pos_x, pos_y, 0), width_(width), height_(height), range_deg_(range_deg),
+          label_pos_(label_pos), show_degrees_(show_degrees), degree_interval_(degree_interval),
+          tick_cardinal_h_(tick_cardinal_h), tick_intercardinal_h_(tick_intercardinal_h),
+          tick_medium_h_(tick_medium_h), tick_small_h_(tick_small_h),
+          center_r_(center_r), center_g_(center_g), center_b_(center_b),
+          show_home_(show_home), home_r_(home_r), home_g_(home_g), home_b_(home_b) {}
+
+    void setFact(uint idx, Fact fact) override {
+        if (idx == 0) {
+            if (fact.getType() == Fact::T_INT)
+                heading_ = (int)((fact.getIntValue() % 360 + 360) % 360);
+            else if (fact.getType() == Fact::T_UINT)
+                heading_ = (int)(fact.getUintValue() % 360);
+        } else if (idx == 1) {
+            // Home bearing relative to drone heading (degrees, any range)
+            if (fact.getType() == Fact::T_DOUBLE)      home_bearing_ = fact.getDoubleValue();
+            else if (fact.getType() == Fact::T_INT)    home_bearing_ = (double)fact.getIntValue();
+            else if (fact.getType() == Fact::T_UINT)   home_bearing_ = (double)fact.getUintValue();
+        } else {
+            spdlog::error("HeadingTapeWidget: unexpected setFact idx {}", idx);
+        }
+    }
+
+    void draw(cairo_t *cr) override {
+        auto [ox, oy] = xy(cr);
+        double px_per_deg = (double)width_ / range_deg_;
+        double mid_x = ox + width_ / 2.0;
+
+        // Label baseline Y
+        const double approx_ascent  = 12.0;
+        const double approx_descent =  3.0;
+        const double label_gap      =  3.0;  // pixel gap between tick end and letter edge
+        double label_y;
+        if (label_pos_ == "bottom")
+            label_y = oy + height_ - 4.0;
+        else if (label_pos_ == "middle")
+            label_y = oy + height_ / 2.0 + approx_ascent / 2.0;
+        else  // "top"
+            label_y = oy + approx_ascent + 2.0;
+
+        // Exclusion zone: ticks must not enter [letter_top, letter_bottom]
+        double letter_top    = label_y - approx_ascent - label_gap;
+        double letter_bottom = label_y + approx_descent + label_gap;
+
+        cairo_save(cr);
+        cairo_select_font_face(cr, "Roboto", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+
+        int half = range_deg_ / 2 + 5;
+
+        // Pass 1: tick lines — clipped to tape, separated from letter area
+        cairo_save(cr);
+        cairo_rectangle(cr, ox, oy, width_, height_);
+        cairo_clip(cr);
+
+        for (int offset = -half; offset <= half; offset++) {
+            int norm = ((heading_ + offset) % 360 + 360) % 360;
+            bool cardinal      = (norm % 90 == 0);
+            bool intercardinal = (norm % 45 == 0 && !cardinal);
+            bool at_minor      = (norm % 10 == 0);
+            if (!cardinal && !intercardinal && !at_minor) continue;
+
+            double px = mid_x + offset * px_per_deg;
+            if (px < ox || px > ox + width_) continue;
+
+            int tick_h;
+            if (cardinal)             tick_h = tick_cardinal_h_;
+            else if (intercardinal)   tick_h = tick_intercardinal_h_;
+            else if (norm % 30 == 0)  tick_h = tick_medium_h_;
+            else                      tick_h = tick_small_h_;
+
+            double alpha = cardinal ? 1.0 : (intercardinal ? 0.85 : 0.55);
+            cairo_set_source_rgba(cr, 1, 1, 1, alpha);
+            cairo_set_line_width(cr, cardinal ? 2.0 : 1.0);
+
+            if (label_pos_ == "top") {
+                // Labels at top → ticks grow downward from just below letter descenders
+                cairo_move_to(cr, px, letter_bottom);
+                cairo_line_to(cr, px, letter_bottom + tick_h);
+            } else if (label_pos_ == "bottom") {
+                // Labels at bottom → ticks grow upward from just above letter ascenders
+                cairo_move_to(cr, px, letter_top);
+                cairo_line_to(cr, px, letter_top - tick_h);
+            } else {  // middle: two half-ticks above and below the letter, each with a gap
+                double half_h = tick_h / 2.0;
+                cairo_move_to(cr, px, letter_top);
+                cairo_line_to(cr, px, letter_top - half_h);
+                cairo_stroke(cr);
+                cairo_move_to(cr, px, letter_bottom);
+                cairo_line_to(cr, px, letter_bottom + half_h);
+            }
+            cairo_stroke(cr);
+        }
+        cairo_restore(cr);  // remove clip so labels aren't cut off
+
+        // Pass 2: labels — drawn without clip so text is never half-cut at tape edges
+        for (int offset = -half; offset <= half; offset++) {
+            int norm = ((heading_ + offset) % 360 + 360) % 360;
+            bool cardinal      = (norm % 90 == 0);
+            bool intercardinal = (norm % 45 == 0 && !cardinal);
+            bool show_deg      = show_degrees_ && (norm % degree_interval_ == 0)
+                                 && !cardinal && !intercardinal;
+            if (!cardinal && !intercardinal && !show_deg) continue;
+
+            double px = mid_x + offset * px_per_deg;
+            if (px < ox || px > ox + width_) continue;
+
+            if (cardinal || intercardinal) {
+                const char *label = compass_label(norm);
+                double font_sz = cardinal ? 14.0 : 11.0;
+                cairo_select_font_face(cr, "Roboto", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+                cairo_set_font_size(cr, font_sz);
+                cairo_text_extents_t ext;
+                cairo_text_extents(cr, label, &ext);
+                cairo_set_source_rgba(cr, 1, 1, 1, cardinal ? 1.0 : 0.85);
+                cairo_move_to(cr, px - ext.width / 2.0 - ext.x_bearing, label_y);
+                cairo_show_text(cr, label);
+                cairo_select_font_face(cr, "Roboto", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+            } else {  // degree number
+                char dbuf[8];
+                snprintf(dbuf, sizeof(dbuf), "%d", norm);
+                cairo_set_font_size(cr, 10.0);
+                cairo_text_extents_t ext;
+                cairo_text_extents(cr, dbuf, &ext);
+                cairo_set_source_rgba(cr, 0.75, 0.75, 0.75, 0.75);
+                cairo_move_to(cr, px - ext.width / 2.0 - ext.x_bearing, label_y);
+                cairo_show_text(cr, dbuf);
+            }
+        }
+
+        // Center indicator: full-height line + downward triangle at top (configurable color)
+        cairo_set_source_rgba(cr, center_r_, center_g_, center_b_, 1.0);
+        cairo_set_line_width(cr, 2.0);
+        cairo_move_to(cr, mid_x, oy);
+        cairo_line_to(cr, mid_x, oy + height_);
+        cairo_stroke(cr);
+        cairo_move_to(cr, mid_x - 6, oy);
+        cairo_line_to(cr, mid_x + 6, oy);
+        cairo_line_to(cr, mid_x,     oy + 9);
+        cairo_close_path(cr);
+        cairo_fill(cr);
+
+        // Home direction triangle: upward-pointing triangle at tape bottom
+        if (show_home_ && home_bearing_ > -990.0) {
+            // Normalize bearing to [-180, +180)
+            double hb = home_bearing_;
+            while (hb >= 180.0)  hb -= 360.0;
+            while (hb < -180.0)  hb += 360.0;
+            double home_px = mid_x + hb * px_per_deg;
+
+            cairo_set_source_rgba(cr, home_r_, home_g_, home_b_, 1.0);
+            cairo_select_font_face(cr, "Roboto", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+            cairo_set_font_size(cr, 14.0);
+            if (home_px >= ox && home_px <= ox + width_) {
+                // Fully visible: upward triangle at tape bottom + "H" label below
+                double ty = oy + height_;
+                cairo_move_to(cr, home_px,     ty - 9);
+                cairo_line_to(cr, home_px - 6, ty);
+                cairo_line_to(cr, home_px + 6, ty);
+                cairo_close_path(cr);
+                cairo_fill(cr);
+                cairo_text_extents_t he;
+                cairo_text_extents(cr, "H", &he);
+                cairo_move_to(cr, home_px - he.width / 2.0 - he.x_bearing, ty + he.height + 2.0);
+                cairo_show_text(cr, "H");
+            } else {
+                // Off-screen: arrow at edge + "H" beside it
+                double edge_x = (home_px < ox) ? ox + 4 : ox + width_ - 4;
+                double ey = oy + height_ - 6;
+                double dir = (home_px < ox) ? -1.0 : 1.0;
+                cairo_move_to(cr, edge_x + dir * 6, ey);
+                cairo_line_to(cr, edge_x - dir * 3, ey - 5);
+                cairo_line_to(cr, edge_x - dir * 3, ey + 5);
+                cairo_close_path(cr);
+                cairo_fill(cr);
+                cairo_text_extents_t he;
+                cairo_text_extents(cr, "H", &he);
+                double label_x = (home_px < ox) ? edge_x + 8 : edge_x - 8 - he.width - he.x_bearing;
+                cairo_move_to(cr, label_x, ey + he.height / 2.0);
+                cairo_show_text(cr, "H");
+            }
+        }
+
+        // Heading value above the tape
+        char buf[8];
+        snprintf(buf, sizeof(buf), "%3d", heading_);
+        cairo_select_font_face(cr, "Roboto", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+        cairo_set_font_size(cr, 15.0);
+        cairo_text_extents_t ext;
+        cairo_text_extents(cr, buf, &ext);
+        cairo_set_source_rgba(cr, 1, 1, 1, 1);
+        cairo_move_to(cr, mid_x - ext.width / 2.0 - ext.x_bearing, oy - 4);
+        cairo_show_text(cr, buf);
+
+        cairo_restore(cr);
+    }
+
+private:
+    static const char* compass_label(int d) {
+        switch (d) {
+        case 0:   return "N";
+        case 45:  return "NE";
+        case 90:  return "E";
+        case 135: return "SE";
+        case 180: return "S";
+        case 225: return "SW";
+        case 270: return "W";
+        case 315: return "NW";
+        default:  return "";
+        }
+    }
+
+    int width_, height_, range_deg_;
+    std::string label_pos_;
+    bool show_degrees_;
+    int degree_interval_;
+    int tick_cardinal_h_, tick_intercardinal_h_, tick_medium_h_, tick_small_h_;
+    double center_r_, center_g_, center_b_;
+    bool show_home_;
+    double home_r_, home_g_, home_b_;
+    int heading_ = 0;
+    double home_bearing_ = -999.0;  // sentinel: not yet received
+};
+
 class Osd {
 public:
 	void loadConfig(json cfg) {
@@ -2124,6 +2359,32 @@ private:
 			return {new PopupWidget(x, y, timeout_ms, (uint)matchers.size()), matchers};
 		} else if (type == "DebugWidget") {
 			return {new DebugWidget(x, y, (uint)matchers.size()), matchers};
+		} else if (type == "HeadingTapeWidget") {
+			int w    = widget_j.contains("width")            ? widget_j.at("width").get<int>()            : 400;
+			int h    = widget_j.contains("height")           ? widget_j.at("height").get<int>()           : 50;
+			int r    = widget_j.contains("range")            ? widget_j.at("range").get<int>()            : 120;
+			std::string lpos = widget_j.contains("label_position") ? widget_j.at("label_position").get<std::string>() : "top";
+			bool sdeg = widget_j.contains("show_degrees")    ? widget_j.at("show_degrees").get<bool>()   : false;
+			int dint = widget_j.contains("degree_interval")  ? widget_j.at("degree_interval").get<int>() : 30;
+			int tch  = widget_j.contains("tick_cardinal_h")       ? widget_j.at("tick_cardinal_h").get<int>()       : 30;
+			int tih  = widget_j.contains("tick_intercardinal_h")  ? widget_j.at("tick_intercardinal_h").get<int>()  : 20;
+			int tmh  = widget_j.contains("tick_medium_h")         ? widget_j.at("tick_medium_h").get<int>()         : 12;
+			int tsh  = widget_j.contains("tick_small_h")          ? widget_j.at("tick_small_h").get<int>()          : 6;
+			// Center indicator color (default: gold)
+			double cr_ = 1.0, cg_ = 0.85, cb_ = 0.0;
+			if (widget_j.contains("center_color")) {
+				auto cc = widget_j.at("center_color");
+				cr_ = cc.value("r", 1.0); cg_ = cc.value("g", 0.85); cb_ = cc.value("b", 0.0);
+			}
+			// Home direction triangle (default: green, disabled)
+			bool show_home = widget_j.value("show_home", false);
+			double hr_ = 0.0, hg_ = 0.85, hb_ = 0.2;
+			if (widget_j.contains("home_color")) {
+				auto hc = widget_j.at("home_color");
+				hr_ = hc.value("r", 0.0); hg_ = hc.value("g", 0.85); hb_ = hc.value("b", 0.2);
+			}
+			return {new HeadingTapeWidget(x, y, w, h, r, lpos, sdeg, dint, tch, tih, tmh, tsh,
+			                             cr_, cg_, cb_, show_home, hr_, hg_, hb_), matchers};
 		} else {
 			spdlog::warn("Widget '{}': unknown type: {}", name, type);
 			return {nullptr, {}};

@@ -55,6 +55,64 @@ TEST_CASE("Expression evaluation tests", "[ExpressionTree]")
     }
 }
 
+TEST_CASE("Expression tokenizer: function calls", "[ExpressionTree]")
+{
+    TestExpressionTree tree;
+    REQUIRE(tree.tokenize("abs(x)") ==
+            std::vector<std::string>{"abs", "(", "x", ")"});
+    REQUIRE(tree.tokenize("mod(x * 57.2958 + 360, 360)") ==
+            std::vector<std::string>{"mod", "(", "x", "*", "57.2958", "+", "360", ",", "360", ")"});
+    REQUIRE(tree.tokenize("clamp(x, 0, 100)") ==
+            std::vector<std::string>{"clamp", "(", "x", ",", "0", ",", "100", ")"});
+}
+
+TEST_CASE("Expression evaluation: built-in functions", "[ExpressionTree]")
+{
+    TestExpressionTree tree;
+
+    SECTION("abs positive") { tree.parse("abs(x)"); REQUIRE(tree.evaluate(5.0)  == 5.0); }
+    SECTION("abs negative") { tree.parse("abs(x)"); REQUIRE(tree.evaluate(-5.0) == 5.0); }
+    SECTION("floor")  { tree.parse("floor(x)");  REQUIRE(tree.evaluate(2.9)  == 2.0); }
+    SECTION("ceil")   { tree.parse("ceil(x)");   REQUIRE(tree.evaluate(2.1)  == 3.0); }
+    SECTION("round")  { tree.parse("round(x)");  REQUIRE(tree.evaluate(2.5)  == 3.0); }
+    SECTION("sqrt")   { tree.parse("sqrt(x)");   REQUIRE(tree.evaluate(9.0)  == Approx(3.0)); }
+
+    SECTION("mod literal") {
+        tree.parse("mod(370, 360)");
+        REQUIRE(tree.evaluate(0) == Approx(10.0));
+    }
+    SECTION("mod yaw to 0-360") {
+        tree.parse("mod(x * 57.2958 + 360, 360)");
+        REQUIRE(tree.evaluate(-0.15882539) == Approx(350.9).epsilon(0.1));
+        REQUIRE(tree.evaluate(0.0)         == Approx(0.0).margin(0.001)); // mod(360,360)=0 = North
+    }
+    SECTION("min clamp upper") {
+        tree.parse("min(x, 100)");
+        REQUIRE(tree.evaluate(150) == 100.0);
+        REQUIRE(tree.evaluate(50)  == 50.0);
+    }
+    SECTION("max clamp lower") {
+        tree.parse("max(x, 0)");
+        REQUIRE(tree.evaluate(-5) == 0.0);
+        REQUIRE(tree.evaluate(5)  == 5.0);
+    }
+    SECTION("clamp three args") {
+        tree.parse("clamp(x, 0, 100)");
+        REQUIRE(tree.evaluate(-10) == 0.0);
+        REQUIRE(tree.evaluate(50)  == 50.0);
+        REQUIRE(tree.evaluate(150) == 100.0);
+    }
+    SECTION("nested functions") {
+        tree.parse("abs(min(x, 0))");
+        REQUIRE(tree.evaluate(-5)  == 5.0);
+        REQUIRE(tree.evaluate(5)   == 0.0);
+    }
+    SECTION("function mixed with arithmetic") {
+        tree.parse("abs(x) * 2 + 1");
+        REQUIRE(tree.evaluate(-3) == Approx(7.0));
+    }
+}
+
 TEST_CASE("TplTextWidget supports all fact data-types and float precision", "[TplTextWidget]") {
     // Template covers: bool, int, uint, float (default), float (0/2/4 precision), string
     TestTplTextWidget widget(
@@ -76,8 +134,16 @@ TEST_CASE("TplTextWidget supports all fact data-types and float precision", "[Tp
 
     REQUIRE(
         result ==
-        "Bool: t, Int: -123, Uint: 456, Float: 3.14, Float0: 3, Float2: 3.34, Float4: 3.4416, String: hello, Undef: ?"
+        "Bool: t, Int: -123, Uint: 456, Float: 3.14, Float0: 3, Float2: 3.34, Float4: 3.4416, String: hello, Undef: --"
     );
+}
+
+TEST_CASE("TplTextWidget %+f sign flag", "[TplTextWidget]") {
+    TestTplTextWidget widget(0, 0, "R:%+.1f P:%+.1f", 2);
+    widget.setDoubleFact(0,  12.5);
+    widget.setDoubleFact(1, -3.7);
+    std::string result = *widget.render_tpl();
+    REQUIRE(result == "R:+12.5 P:-3.7");
 }
 
 int compare_surfaces_with_tolerance(cairo_surface_t* a, cairo_surface_t* b, int tolerance = 5, int max_report = 10) {

@@ -25,6 +25,8 @@ extern "C" {
 
 #include <pthread.h>
 #include <map>
+#include <unordered_map>
+#include <stack>
 #include <vector>
 #include <ranges>
 #include <memory>
@@ -152,34 +154,73 @@ private:
 };
 
 /**
- * This class can parse and evaluate basic math expressions.
- * It understands the following operators and tokens:
- * - '123', '12.34' - integer and simple float numbers (negative not supported yet)
- * - '+', '-', '/', '*' - standard math operators with respect to precedence
- * - '(', ')' - parentheses to alter the precedence
- * - 'x' - the variable that is goig to be passed to `evaluate` function
+ * This class can parse and evaluate math expressions with functions.
+ * Supported tokens:
+ * - '123', '12.34' - integer and float literals
+ * - '+', '-', '/', '*' - arithmetic operators with standard precedence
+ * - '(', ')' - grouping parentheses
+ * - 'x' - the input variable passed to evaluate()
+ * - 'name(a, b, ...)' - function calls; built-ins listed below; extensible via register_func()
  *
- * It always evaluates float math and returns float.
+ * Always returns double. Functions: abs floor ceil round sqrt sin cos tan asin acos atan
+ *                                   fmod min max pow atan2 clamp
  */
 class ExpressionTree {
+public:
+    // --- Public function registration API ---
+
+    struct FuncDef {
+        int min_args;
+        int max_args; // -1 = variadic
+        std::function<double(const std::vector<double>&)> impl;
+    };
+
+    static std::unordered_map<std::string, FuncDef>& func_registry() {
+        static std::unordered_map<std::string, FuncDef> r;
+        return r;
+    }
+
+    static void register_func(std::string name, int min_args, int max_args,
+                              std::function<double(const std::vector<double>&)> impl) {
+        func_registry()[std::move(name)] = {min_args, max_args, std::move(impl)};
+    }
+
+private:
+    static bool register_builtins() {
+        using A = const std::vector<double>&;
+        register_func("abs",   1, 1, [](A a){ return std::abs(a[0]); });
+        register_func("floor", 1, 1, [](A a){ return std::floor(a[0]); });
+        register_func("ceil",  1, 1, [](A a){ return std::ceil(a[0]); });
+        register_func("round", 1, 1, [](A a){ return std::round(a[0]); });
+        register_func("sqrt",  1, 1, [](A a){ return std::sqrt(a[0]); });
+        register_func("sin",   1, 1, [](A a){ return std::sin(a[0]); });
+        register_func("cos",   1, 1, [](A a){ return std::cos(a[0]); });
+        register_func("tan",   1, 1, [](A a){ return std::tan(a[0]); });
+        register_func("asin",  1, 1, [](A a){ return std::asin(a[0]); });
+        register_func("acos",  1, 1, [](A a){ return std::acos(a[0]); });
+        register_func("atan",  1, 1, [](A a){ return std::atan(a[0]); });
+        register_func("min",   2, 2, [](A a){ return std::min(a[0], a[1]); });
+        register_func("max",   2, 2, [](A a){ return std::max(a[0], a[1]); });
+        register_func("pow",   2, 2, [](A a){ return std::pow(a[0], a[1]); });
+        register_func("atan2", 2, 2, [](A a){ return std::atan2(a[0], a[1]); });
+        register_func("clamp", 3, 3, [](A a){ return std::clamp(a[0], a[1], a[2]); });
+        register_func("mod",   2, 2, [](A a){ return std::fmod(a[0], a[1]); });
+        register_func("deg",   1, 1, [](A a){ return a[0] * 57.29577951308232; });
+        register_func("norm",  2, 2, [](A a){ return std::fmod(a[0] + a[1], a[1]); });
+        return true;
+    }
+    static inline bool _builtins_registered = register_builtins();
+
 public:
 	ExpressionTree() : root(nullptr) {}
 	ExpressionTree(const std::string &expression) : root(nullptr) {
 		parse(expression);
 	}
-    // Move constructor
     ExpressionTree(ExpressionTree&& other) noexcept : root(std::move(other.root)) {}
-    
-    // Copy constructor
     ExpressionTree(const ExpressionTree& other) {
-        if (other.root) {
-            root = std::make_unique<Node>(*other.root); // Make a deep copy
-        } else {
-            root = nullptr;
-        }
+        root = other.root ? std::make_unique<Node>(*other.root) : nullptr;
     }
 
-	// Tokenize the expression string, return vector of tokens
 	std::vector<std::string> tokenize(const std::string& expression) {
 		std::vector<std::string> tokens;
 		std::string currentToken;
@@ -187,19 +228,19 @@ public:
 		for (size_t i = 0; i < expression.length(); ++i) {
 			char c = expression[i];
 
-			// Handling digits and decimal point for numbers
 			if (std::isdigit(c) || c == '.') {
 				currentToken += c;
-			} 
-			// Handling operators, 'x' and parentheses
-			else if (c == '+' || c == '-' || c == '*' || c == '/' || c == '(' || c == ')' || c == 'x') {
+			} else if (std::isalpha(c) || c == '_') {
+                // identifier: variable 'x' or function name
+				currentToken += c;
+			} else if (c == '+' || c == '-' || c == '*' || c == '/' ||
+                       c == '(' || c == ')' || c == ',') {
 				if (!currentToken.empty()) {
 					tokens.push_back(currentToken);
 					currentToken.clear();
 				}
-				tokens.push_back(std::string(1, c)); // Add the operator or parenthesis as a token
+				tokens.push_back(std::string(1, c));
 			} else if (std::isspace(c)) {
-				// Ignore whitespace
 				if (!currentToken.empty()) {
 					tokens.push_back(currentToken);
 					currentToken.clear();
@@ -210,51 +251,97 @@ public:
 						  "Unexpected symbol at " + std::to_string(i) + ": '" + c + "'");
 			}
 		}
-    
 		if (!currentToken.empty()) {
-			tokens.push_back(currentToken); // Add any remaining token
+			tokens.push_back(currentToken);
 		}
-
 		return tokens;
 	}
-	
+
     void parseTokens(const std::vector<std::string>& tokens) {
-        std::vector<Node*> output;
-        std::vector<Node*> operators;
+        // Use unique_ptr wrappers to avoid leaks on exception paths.
+        // Raw Node* aliases into the same memory — ownership stays in the vectors.
+        std::vector<std::unique_ptr<Node>> output;
+        std::vector<std::unique_ptr<Node>> operators;
+        std::stack<bool> func_call;  // true if the matching '(' is a function call
+        std::stack<int>  arg_count;  // argument count for the current function call
+
+        auto popUntilParen = [&]() {
+            while (!operators.empty() && operators.back()->op != '(') {
+                processOperatorU(output, operators);
+            }
+            if (operators.empty())
+                throw ExpressionException(ExpressionException::MISMATCHED_PARENTHESES,
+                                          "Mismatched parentheses");
+        };
 
         for (const auto& token : tokens) {
             if (isNumber(token)) {
-                output.push_back(new Node(std::stod(token)));
+                output.push_back(std::make_unique<Node>(std::stod(token)));
             } else if (token == "x") {
-                output.push_back(new Node('x'));
+                output.push_back(std::make_unique<Node>('x'));
+            } else if (func_registry().count(token)) {
+                auto fn = std::make_unique<Node>('@');
+                fn->func = token;
+                operators.push_back(std::move(fn));
             } else if (token == "(") {
-                operators.push_back(new Node('(')); // Push a dummy node for '('
+                bool is_func = !operators.empty() && operators.back()->op == '@';
+                func_call.push(is_func);
+                if (is_func) arg_count.push(1);
+                operators.push_back(std::make_unique<Node>('('));
+            } else if (token == ",") {
+                popUntilParen();
+                if (arg_count.empty())
+                    throw ExpressionException(ExpressionException::INVALID_EXPRESSION,
+                                              "Unexpected ','");
+                arg_count.top()++;
             } else if (token == ")") {
-                while (!operators.empty() && operators.back()->op != '(') {
-                    processOperator(output, operators);
+                popUntilParen();
+                operators.pop_back(); // remove '('
+                bool was_func = !func_call.empty() && func_call.top();
+                if (!func_call.empty()) func_call.pop();
+
+                if (was_func) {
+                    int n = arg_count.top(); arg_count.pop();
+                    if (operators.empty() || operators.back()->op != '@')
+                        throw ExpressionException(ExpressionException::INVALID_EXPRESSION,
+                                                  "Function node missing");
+                    auto fn = std::move(operators.back()); operators.pop_back();
+                    auto it = func_registry().find(fn->func);
+                    if (it == func_registry().end())
+                        throw ExpressionException(ExpressionException::UNKNOWN_OPERATOR,
+                                                  "Unknown function: " + fn->func);
+                    auto& def = it->second;
+                    if (n < def.min_args || (def.max_args != -1 && n > def.max_args))
+                        throw ExpressionException(ExpressionException::INVALID_EXPRESSION,
+                                                  "Wrong arg count for " + fn->func);
+                    fn->args.resize(n);
+                    size_t base = output.size() - n;
+                    for (int i = 0; i < n; ++i)
+                        fn->args[i] = std::move(output[base + i]);
+                    output.resize(base);
+                    output.push_back(std::move(fn));
                 }
-                if (operators.empty()) {
-                  throw ExpressionException(
-                      ExpressionException::MISMATCHED_PARENTHESES,
-                      "Mismatched parentheses");
-                }
-                operators.pop_back(); // Remove the '('
             } else {
-                while (!operators.empty() && precedence(operators.back()->op) >= precedence(token[0])) {
-                    processOperator(output, operators);
+                while (!operators.empty() &&
+                       operators.back()->op != '(' &&
+                       operators.back()->op != '@' &&
+                       precedence(operators.back()->op) >= precedence(token[0])) {
+                    processOperatorU(output, operators);
                 }
-                operators.push_back(new Node(token[0]));
+                operators.push_back(std::make_unique<Node>(token[0]));
             }
         }
 
         while (!operators.empty()) {
-            processOperator(output, operators);
+            processOperatorU(output, operators);
         }
 
-        root.reset(output.back());
+        if (output.empty())
+            throw ExpressionException(ExpressionException::INVALID_EXPRESSION,
+                                      "Empty expression");
+        root = std::move(output.back());
     }
 
-	// Tokenize and parse the expression
     void parse(const std::string &expression) {
 		parseTokens(tokenize(expression));
 	}
@@ -265,27 +352,29 @@ public:
 
 	std::string treeToString() const {
 		if (!root.get()) return "null";
-
 		return nodeToString(root.get());
 	}
 
 private:
     struct Node {
-        char op; // Operator: +, -, *, /, 'x' variable
-        double value; // Used for numeric values
-        std::unique_ptr<Node> left, right; // Left and right children
+        char op;
+        double value;
+        std::string func;                        // populated when op=='@'
+        std::vector<std::unique_ptr<Node>> args; // function arguments, when op=='@'
+        std::unique_ptr<Node> left, right;       // arithmetic children
 
-        Node(double val) : op(0), value(val), left(nullptr), right(nullptr) {}
-        Node(char operation) : op(operation), value(0), left(nullptr), right(nullptr) {}
-        // Copy constructor for Node
-        Node(const Node& other) 
-            : op(other.op), value(other.value), 
-              left(other.left ? std::make_unique<Node>(*other.left) : nullptr), 
-              right(other.right ? std::make_unique<Node>(*other.right) : nullptr) {}
-
-        // Move constructor for Node
-        Node(Node&& other) noexcept 
-            : op(other.op), value(other.value), 
+        Node(double val) : op(0), value(val) {}
+        Node(char operation) : op(operation), value(0) {}
+        Node(const Node& other)
+            : op(other.op), value(other.value), func(other.func),
+              left(other.left   ? std::make_unique<Node>(*other.left)  : nullptr),
+              right(other.right ? std::make_unique<Node>(*other.right) : nullptr) {
+            for (auto& a : other.args)
+                args.push_back(std::make_unique<Node>(*a));
+        }
+        Node(Node&& other) noexcept
+            : op(other.op), value(other.value), func(std::move(other.func)),
+              args(std::move(other.args)),
               left(std::move(other.left)), right(std::move(other.right)) {}
 	};
 
@@ -294,7 +383,7 @@ private:
     bool isNumber(const std::string& s) {
         char* p;
         std::strtod(s.c_str(), &p);
-        return *p == 0; // Verify if p points to the end of the string
+        return *p == 0;
     }
 
     int precedence(char op) {
@@ -303,46 +392,60 @@ private:
         return 0;
     }
 
-    void processOperator(std::vector<Node*>& output, std::vector<Node*>& operators) {
-        Node* right = output.back(); output.pop_back();
-        Node* left = output.back(); output.pop_back();
-        Node* opNode = operators.back(); operators.pop_back();
-        opNode->left = std::unique_ptr<Node>(left);
-        opNode->right = std::unique_ptr<Node>(right);
-        output.push_back(opNode);
+    void processOperatorU(std::vector<std::unique_ptr<Node>>& output,
+                          std::vector<std::unique_ptr<Node>>& operators) {
+        auto right = std::move(output.back()); output.pop_back();
+        auto left  = std::move(output.back()); output.pop_back();
+        auto op    = std::move(operators.back()); operators.pop_back();
+        op->left  = std::move(left);
+        op->right = std::move(right);
+        output.push_back(std::move(op));
     }
 
     double evaluateNode(Node* node, double xValue) const {
         if (!node) return 0;
-        if (node->op == 0) {
-            return node->value; // Return numeric value
-        } else if (node->op == 'x') {
-            return xValue; // Return the value of variable x
+        if (node->op == 0)   return node->value;
+        if (node->op == 'x') return xValue;
+        if (node->op == '@') {
+            auto& def = func_registry().at(node->func);
+            std::vector<double> vals;
+            vals.reserve(node->args.size());
+            for (auto& a : node->args)
+                vals.push_back(evaluateNode(a.get(), xValue));
+            return def.impl(vals);
         }
-        double leftValue = evaluateNode(node->left.get(), xValue);
+        double leftValue  = evaluateNode(node->left.get(),  xValue);
         double rightValue = evaluateNode(node->right.get(), xValue);
         switch (node->op) {
             case '+': return leftValue + rightValue;
             case '-': return leftValue - rightValue;
             case '*': return leftValue * rightValue;
             case '/':
-                if (rightValue == 0) {
-                  throw ExpressionException(
-                      ExpressionException::DIVISION_BY_ZERO,
-                      "Division by zero");
-                }
+                if (rightValue == 0)
+                    throw ExpressionException(ExpressionException::DIVISION_BY_ZERO,
+                                              "Division by zero");
                 return leftValue / rightValue;
             default:
-              throw ExpressionException(ExpressionException::UNKNOWN_OPERATOR,
-                                        "Unknown operator");
+                throw ExpressionException(ExpressionException::UNKNOWN_OPERATOR,
+                                          "Unknown operator");
         }
     }
 
-	std::string nodeToString(Node *node) const {
+	std::string nodeToString(Node* node) const {
+		if (!node) return "null";
 		std::ostringstream oss;
-		oss << "Node(op=" << (node->op != 0 ? std::string(1, node->op) : std::to_string(node->value)) 
-			<< ", left=" << nodeToString(node->left.get()) 
-			<< ", right=" << nodeToString(node->right.get()) << ")";
+        if (node->op == '@') {
+            oss << node->func << "(";
+            for (size_t i = 0; i < node->args.size(); ++i) {
+                if (i) oss << ", ";
+                oss << nodeToString(node->args[i].get());
+            }
+            oss << ")";
+        } else {
+            oss << "Node(op=" << (node->op != 0 ? std::string(1, node->op) : std::to_string(node->value))
+                << ", left=" << nodeToString(node->left.get())
+                << ", right=" << nodeToString(node->right.get()) << ")";
+        }
 		return oss.str();
 	}
 
@@ -574,7 +677,12 @@ public:
 	FactMatcher(std::string name, FactTags tags): name(name), tags(tags) {};
 	FactMatcher(std::string name): name(name), tags({}) {};
 
-	
+	// Returns a copy that matches the same fact but applies no conversion.
+	// Used when registering container child matchers at the Osd routing level:
+	// the container itself holds the full matchers with convert expressions.
+	FactMatcher routing_copy() const { return FactMatcher(name, tags); }
+
+
 	/**
 	 * Returns true if names are equal and all match_tags are defined and have equal value
 	 */
@@ -908,13 +1016,14 @@ protected:
         TokenType type;
         std::optional<std::string> value; // Used to hold literal
         uint precision;    // Precision for float placeholders if applicable
+        bool show_sign;    // %+f — always print sign for positive values
 
         Token(TokenType t, std::string v) // literal
-            : type(t), value(std::move(v)), precision(0) {}
-        Token(TokenType t, uint p) // float
-            : type(t), value(std::nullopt), precision(p) {}
+            : type(t), value(std::move(v)), precision(0), show_sign(false) {}
+        Token(TokenType t, uint p, bool sign = false) // float
+            : type(t), value(std::nullopt), precision(p), show_sign(sign) {}
         Token(TokenType t) // other
-            : type(t), value(std::nullopt), precision(0) {}
+            : type(t), value(std::nullopt), precision(0), show_sign(false) {}
     };
 
     std::unique_ptr<std::string> render_tpl(const std::string& tpl, const std::vector<Fact>& facts) {
@@ -945,9 +1054,12 @@ protected:
                     case TokenType::Uint:
                         msg << facts[fact_i].getUintValue();
                         break;
-                    case TokenType::Float:
-                        msg << std::fixed << std::setprecision(token.precision) << facts[fact_i].getDoubleValue();
+                    case TokenType::Float: {
+                        double v = facts[fact_i].getDoubleValue();
+                        if (token.show_sign && v >= 0.0) msg << '+';
+                        msg << std::fixed << std::setprecision(token.precision) << v;
                         break;
+                    }
                     case TokenType::String:
                         msg << facts[fact_i].asString();
                         break;
@@ -968,7 +1080,7 @@ protected:
         // shifting every subsequent placeholder onto the wrong fact index
         // (e.g. an %i/%d-bound INT fact ends up read by the next %u token,
         // which calls getUintValue() on it and crashes).
-        std::regex token_regex(R"(%%|%[bisud]|%(\.\d+)?f|[^%]+)"); // Match placeholders and literals
+        std::regex token_regex(R"(%%|%[bisud]|%\+?(\.\d+)?f|[^%]+)"); // Match placeholders and literals
         std::sregex_iterator iter(tpl.begin(), tpl.end(), token_regex);
         std::sregex_iterator end;
 
@@ -989,12 +1101,14 @@ protected:
                     } else if (match[1] == 'f') {
                         tokens.emplace_back(TokenType::Float, default_precision);
                     }
-                } else if (match.back() == 'f') { // Float placeholder with precision
-                    uint precision = 0;
-                    if (match.size() > 2 && match[1] == '.') {
-                        precision = std::stoi(match.substr(2, match.size() - 3)); // Extract precision
+                } else if (match.back() == 'f') { // Float with optional sign flag and/or precision
+                    bool show_sign = (match.size() > 2 && match[1] == '+');
+                    uint precision = default_precision;
+                    auto dot_pos = match.find('.');
+                    if (dot_pos != std::string::npos) {
+                        precision = std::stoi(match.substr(dot_pos + 1, match.size() - dot_pos - 2));
                     }
-                    tokens.emplace_back(TokenType::Float, precision); // Add float token
+                    tokens.emplace_back(TokenType::Float, precision, show_sign);
                 }
             } else {
                 tokens.emplace_back(TokenType::Literal, match); // Accumulate literal
@@ -1047,6 +1161,53 @@ private:
 	double r, g, b, a;
 };
 
+class BoxWidgetContainer : public Widget {
+public:
+	BoxWidgetContainer(int pos_x, int pos_y, uint w, uint h, double r, double g, double b, double a)
+		: Widget(pos_x, pos_y), w(w), h(h), r(r), g(g), b(b), a(a) {}
+
+	~BoxWidgetContainer() {
+		for (auto* c : children) delete c;
+	}
+
+	void addChild(Widget* child, std::vector<FactMatcher> child_fact_matchers) {
+		children.push_back(child);
+		uint arg_idx = 0;
+		for (auto& m : child_fact_matchers)
+			child_matchers.push_back({m, child, arg_idx++});
+	}
+
+	void setFact(uint /*idx*/, Fact fact) override {
+		for (auto& [matcher, child, arg_idx] : child_matchers) {
+			if (matcher.matches(fact)) {
+				child->setFact(arg_idx, matcher.convert(fact));
+			}
+		}
+	}
+
+	void draw(cairo_t* cr) override {
+		auto [cx, cy] = xy(cr);
+		cairo_set_source_rgba(cr, r, g, b, a);
+		cairo_rectangle(cr, cx, cy, w, h);
+		cairo_fill(cr);
+		cairo_save(cr);
+		cairo_translate(cr, cx, cy);
+		for (auto* child : children) {
+			try { child->draw(cr); }
+			catch (const std::exception& e) {
+				spdlog::warn("BoxWidgetContainer child draw error: {}", e.what());
+			}
+		}
+		cairo_restore(cr);
+	}
+
+private:
+	uint w, h;
+	double r, g, b, a;
+	std::vector<Widget*> children;
+	std::vector<std::tuple<FactMatcher, Widget*, uint>> child_matchers;
+};
+
 class BarChartWidget: public Widget {
 public:
 	enum StatsField {
@@ -1062,7 +1223,7 @@ public:
 		stats(window_s * 1000, window_s * 1000 / num_buckets) {};
 
 	virtual void setFact(uint idx, Fact fact) {
-		assert(idx == 0);
+		if (idx != 0) { spdlog::error("BarChartWidget: unexpected setFact idx {}", idx); return; }
 		switch (fact.getType()) {
 		case Fact::T_INT:
 			stats.add(fact.getIntValue());
@@ -1305,13 +1466,12 @@ public:
 class VideoWidget: public IconTplTextWidget {
 public:
   VideoWidget(int pos_x, int pos_y, uint window_size_ms, uint bucket_size_ms,
-              cairo_surface_t *icon, std::string tpl, uint num_args) :
+              cairo_surface_t *icon, std::string tpl, uint num_args, uint frame_idx) :
 		IconTplTextWidget(pos_x, pos_y, icon, tpl, num_args),
-		fps(window_size_ms, bucket_size_ms) {};
+		fps(window_size_ms, bucket_size_ms), frame_idx_(frame_idx) {};
 
 	virtual void setFact(uint idx, Fact fact) {
-		if (idx == 0) {
-			// replace the value with its increment rate per-second
+		if (idx == frame_idx_) {
 			ulong num_frames = fact.getUintValue(); // should be always '1'
 			fps.add(num_frames);
 			args[idx] = Fact(FactMeta("video_fps"), (ulong)fps.rate_per_second_over_last_ms(1000));
@@ -1322,6 +1482,7 @@ public:
 
 private:
 	RunningAverage fps;
+	uint frame_idx_;
 };
 
 class VideoBitrateWidget: public IconTplTextWidget {
@@ -1330,11 +1491,11 @@ public:
 					 cairo_surface_t *icon, std::string tpl, uint num_args) :
 		IconTplTextWidget(pos_x, pos_y, icon, tpl, num_args),
 		bps(window_size_ms, bucket_size_ms) {
-	  assert(num_args == 1);
+	  if (num_args != 1) throw std::invalid_argument("VideoBitrateWidget: expected 1 fact, got " + std::to_string(num_args));
   };
 
 	virtual void setFact(uint idx, Fact fact) {
-		assert(idx == 0);
+		if (idx != 0) { spdlog::error("VideoBitrateWidget: unexpected setFact idx {}", idx); return; }
 		// replace the value with its increment rate per-second
 		ulong num_bytes = fact.getUintValue();
 		bps.add(num_bytes);
@@ -1352,11 +1513,11 @@ public:
 					 cairo_surface_t *icon, std::string tpl, uint num_args) :
 		IconTplTextWidget(pos_x, pos_y, icon, tpl, 3),  // 3 args, because we calculate min/max/avg
 		timing(window_size_ms, bucket_size_ms) {
-	  assert(num_args == 1);
+	  if (num_args != 1) throw std::invalid_argument("VideoDecodeLatencyWidget: expected 1 fact, got " + std::to_string(num_args));
   };
 
 	virtual void setFact(uint idx, Fact fact) {
-		assert(idx == 0);
+		if (idx != 0) { spdlog::error("VideoDecodeLatencyWidget: unexpected setFact idx {}", idx); return; }
 		ulong decode_time = fact.getUintValue();
 		timing.add(decode_time);
 		Stats stats = timing.get_stats_over_last_ms_result(1000);
@@ -1374,7 +1535,7 @@ class GPSWidget: public Widget {
 public:
 	GPSWidget(int pos_x, int pos_y, uint num_args) :
 		Widget(pos_x, pos_y, num_args) {
-		assert(num_args == 3);
+		if (num_args != 3) throw std::invalid_argument("GPSWidget: expected 3 facts, got " + std::to_string(num_args));
 	};
 
 	void draw(cairo_t *cr) {
@@ -1439,11 +1600,11 @@ public:
                       std::string tpl, uint num_args) :
         TplTextWidget(pos_x, pos_y, tpl, num_args), critical_voltage_mv(critical_voltage_mv),
         max_voltage_mv(max_voltage_mv), num_cells(num_cells) {
-        assert(num_args == 1);
+        if (num_args != 1) throw std::invalid_argument("BatteryCellWidget: expected 1 fact, got " + std::to_string(num_args));
     };
 
     virtual void setFact(uint idx, Fact fact) {
-        assert(idx == 0);
+        if (idx != 0) { spdlog::error("BatteryCellWidget: unexpected setFact idx {}", idx); return; }
         // replace the pack value with per-cell value
         long voltage_mv = (long)fact;
         int cells;
@@ -1623,7 +1784,7 @@ public:
     }
 
     virtual void setFact(uint idx, Fact fact) override {
-        assert(idx == 0);
+        if (idx != 0) { spdlog::error("IconSelectorWidget: unexpected setFact idx {}", idx); return; }
         args[idx] = fact;
         current_icon = selectIcon(fact);
     }
@@ -1718,164 +1879,8 @@ public:
 		}
 		json widgets_j = cfg.at("widgets");
 		for (json widget_j : widgets_j) {
-			if(!(widget_j.contains("name") || widget_j.contains("type") || widget_j.contains("x") ||
-				 widget_j.contains("y") || widget_j.contains("facts"))) {
-				spdlog::error("Missing required key name/type/x/y/facts");
-				return;
-			}
-			auto name = widget_j.at("name").template get<std::string>();
-			auto type = widget_j.at("type").template get<std::string>();
-			auto x = widget_j.at("x").template get<int>();
-			auto y = widget_j.at("y").template get<int>();
-			std::vector<FactMatcher> matchers;
-			for(json matcher_j : widget_j.at("facts")) {
-				auto matcher_name = matcher_j.at("name").template get<std::string>();
-				FactTags tags;
-				if (matcher_j.contains("tags")) {
-					for (auto& [key, value] : matcher_j.at("tags").items()) {
-						tags.insert({key, value});
-					}
-				}
-				if (matcher_j.contains("convert")) {
-					auto expression_str = matcher_j.at("convert").template get<std::string>();
-					try {
-						matchers.push_back(FactMatcher(matcher_name, tags, expression_str));
-					} catch (const ExpressionException& e) {
-						spdlog::error("Invalid convert expression {}: {}",
-									  expression_str, e.what());
-					}
-				} else {
-					matchers.push_back(FactMatcher(matcher_name, tags));
-				}
-			}
-			if (type == "TextWidget") {
-				addWidget(new TextWidget(x, y, widget_j.at("text").template get<std::string>()),
-						  matchers);
-			}
-			else if (type == "ExternalSurfaceWidget") {
-				addWidget(new ExternalSurfaceWidget(x, y, name), matchers);
-			} else if (type == "IconSelectorWidget") {
-				std::vector<std::pair<std::pair<int, int>, std::filesystem::path>> ranges_and_icons;
-				for (const auto& range_icon : widget_j.at("ranges_and_icons")) {
-					int range_start = range_icon.at("range")[0];
-					int range_end = range_icon.at("range")[1];
-					std::filesystem::path icon_path = range_icon.at("icon_path");
-					ranges_and_icons.push_back({{range_start, range_end}, icon_path});
-				}
-				addWidget(new IconSelectorWidget(x, y, ranges_and_icons, assets_dir), matchers);
-			} else if (type == "TplTextWidget") {
-				auto tpl = widget_j.at("template").template get<std::string>();
-				addWidget(new TplTextWidget(x, y, tpl, (uint)matchers.size()), matchers);
-			} else if(type == "IconTplTextWidget") {
-				auto tpl = widget_j.at("template").template get<std::string>();
-				auto icon_path = widget_j.at("icon_path").template get<std::filesystem::path>();
-				cairo_surface_t *icon = openIcon(name, assets_dir, icon_path);
-				if (icon == NULL) break;
-				addWidget(new IconTplTextWidget(x, y, icon, tpl, (uint)matchers.size()), matchers);
-			} else if(type == "DvrStatusWidget") {
-				auto text = widget_j.at("text").template get<std::string>();
-				auto icon_path = widget_j.at("icon_path").template get<std::filesystem::path>();
-				cairo_surface_t *icon = openIcon(name, assets_dir, icon_path);
-				if (icon == NULL) break;
-				addWidget(new DvrStatusWidget(x, y, icon, text), matchers);
-			} else if(type == "VideoWidget") {
-				auto tpl = widget_j.at("template").template get<std::string>();
-				auto icon_path = widget_j.at("icon_path").template get<std::filesystem::path>();
-				uint window_size_s = widget_j.at("per_second_window_s").template get<uint>();
-				uint bucket_size_ms = widget_j.at("per_second_bucket_ms").template get<uint>();;
-				cairo_surface_t *icon = openIcon(name, assets_dir, icon_path);
-				if (icon == NULL) break;
-				addWidget(new VideoWidget(x, y, window_size_s * 1000, bucket_size_ms,
-										  icon, tpl, (uint)matchers.size()),
-						  matchers);
-			} else if(type == "VideoBitrateWidget") {
-				auto tpl = widget_j.at("template").template get<std::string>();
-				auto icon_path = widget_j.at("icon_path").template get<std::filesystem::path>();
-				uint window_size_s = widget_j.at("per_second_window_s").template get<uint>();
-				uint bucket_size_ms = widget_j.at("per_second_bucket_ms").template get<uint>();;
-				cairo_surface_t *icon = openIcon(name, assets_dir, icon_path);
-				if (icon == NULL) break;
-				addWidget(new VideoBitrateWidget(x, y, window_size_s * 1000, bucket_size_ms,
-												 icon, tpl, (uint)matchers.size()),
-						  matchers);
-			} else if(type == "VideoDecodeLatencyWidget") {
-				auto tpl = widget_j.at("template").template get<std::string>();
-				auto icon_path = widget_j.at("icon_path").template get<std::filesystem::path>();
-				uint window_size_s = widget_j.at("per_second_window_s").template get<uint>();
-				uint bucket_size_ms = widget_j.at("per_second_bucket_ms").template get<uint>();;
-				cairo_surface_t *icon = openIcon(name, assets_dir, icon_path);
-				if (icon == NULL) break;
-				addWidget(new VideoDecodeLatencyWidget(x, y, window_size_s * 1000, bucket_size_ms,
-													   icon, tpl, 1),
-						  matchers);
-			} else if(type == "BoxWidget") {
-				auto width = widget_j.at("width").template get<uint>();
-				auto height = widget_j.at("height").template get<uint>();
-				json color_j = widget_j.at("color");
-				auto r = color_j.at("r").template get<double>();
-				auto g = color_j.at("g").template get<double>();
-				auto b = color_j.at("b").template get<double>();
-				auto a = color_j.at("alpha").template get<double>();
-				addWidget(new BoxWidget(x, y, width, height, r, g, b, a), matchers);
-			} else if(type == "BarChartWidget") {
-				auto width = widget_j.at("width").template get<uint>();
-				auto height = widget_j.at("height").template get<uint>();
-				auto window_s = widget_j.at("window_s").template get<uint>();
-				auto num_buckets = widget_j.at("num_buckets").template get<uint>();
-				auto stats_kind_str = widget_j.at("stats_kind").template get<std::string>();
-				BarChartWidget::StatsField stats_kind;
-				if (stats_kind_str == "sum") {
-					stats_kind = BarChartWidget::STATS_SUM;
-				} else if (stats_kind_str == "min") {
-					stats_kind = BarChartWidget::STATS_MIN;
-				} else if (stats_kind_str == "max") {
-					stats_kind = BarChartWidget::STATS_MAX;
-				} else if (stats_kind_str == "count") {
-					stats_kind = BarChartWidget::STATS_COUNT;
-				} else if (stats_kind_str == "avg") {
-					stats_kind = BarChartWidget::STATS_AVG;
-				} else {
-					SPDLOG_WARN("{}: invalid stats_kind {}", name, stats_kind_str);
-					break;
-				}
-				addWidget(new BarChartWidget(x, y, width, height, window_s, num_buckets, stats_kind),
-						  matchers);
-			} else if (type == "GPSWidget") {
-				addWidget(new GPSWidget(x, y, (uint)matchers.size()), matchers);
-            } else if (type == "BatteryCellWidget") {
-                int critical_mv = 3500;
-                int max_mv = 4200;
-                int num_cells = -1;
-				auto tpl = widget_j.at("template").template get<std::string>();
-                if (widget_j.contains("critical_voltage")) {
-                    critical_mv = (int)(widget_j.at("critical_voltage").template get<float>() * 1000);
-                }
-                if (widget_j.contains("max_voltage")) {
-                    max_mv = (int)(widget_j.at("max_voltage").template get<float>() * 1000);
-                }
-                if (widget_j.contains("num_cells")) {
-                    std::string cells = widget_j["num_cells"];
-                    if (cells == "auto") {
-                        num_cells = 0;
-                    } else if (cells == "even") {
-                        num_cells = -1;
-                    } else {
-                        num_cells = widget_j["num_cells"].get<int>();
-                    }
-                }
-                assert(critical_mv < max_mv);
-                addWidget(new BatteryCellWidget(x, y, critical_mv, max_mv, num_cells,
-                                                tpl, (uint)matchers.size()),
-                          matchers);
-			} else if (type == "PopupWidget") {
-				auto timeout_ms = widget_j.at("timeout_ms").template get<uint>();
-				addWidget(new PopupWidget(x, y, timeout_ms, (uint)matchers.size()),
-						  matchers);
-			} else if (type == "DebugWidget") {
-				addWidget(new DebugWidget(x, y, (uint)matchers.size()), matchers);
-			} else {
-				spdlog::warn("Widget '{}': unknown type: {}", name, type);
-			}
+			auto [widget, wmatchers] = parseOneWidget(widget_j, assets_dir);
+			if (widget) addWidget(widget, wmatchers);
 		}
 	}
 
@@ -1948,6 +1953,181 @@ private:
 			return NULL;
 		}
 		return icon;
+	}
+
+	std::pair<Widget*, std::vector<FactMatcher>> parseOneWidget(const json& widget_j, const std::filesystem::path& assets_dir) {
+		if(!(widget_j.contains("name") || widget_j.contains("type") || widget_j.contains("x") ||
+			 widget_j.contains("y") || widget_j.contains("facts"))) {
+			spdlog::error("Missing required key name/type/x/y/facts");
+			return {nullptr, {}};
+		}
+		auto name = widget_j.at("name").template get<std::string>();
+		auto type = widget_j.at("type").template get<std::string>();
+		auto x = widget_j.at("x").template get<int>();
+		auto y = widget_j.at("y").template get<int>();
+		std::vector<FactMatcher> matchers;
+		for(json matcher_j : widget_j.at("facts")) {
+			auto matcher_name = matcher_j.at("name").template get<std::string>();
+			FactTags tags;
+			if (matcher_j.contains("tags")) {
+				for (auto& [key, value] : matcher_j.at("tags").items()) {
+					tags.insert({key, value});
+				}
+			}
+			if (matcher_j.contains("convert")) {
+				auto expression_str = matcher_j.at("convert").template get<std::string>();
+				try {
+					matchers.push_back(FactMatcher(matcher_name, tags, expression_str));
+				} catch (const ExpressionException& e) {
+					spdlog::error("Invalid convert expression {}: {}",
+								  expression_str, e.what());
+				}
+			} else {
+				matchers.push_back(FactMatcher(matcher_name, tags));
+			}
+		}
+		if (type == "TextWidget") {
+			return {new TextWidget(x, y, widget_j.at("text").template get<std::string>()), matchers};
+		} else if (type == "ExternalSurfaceWidget") {
+			return {new ExternalSurfaceWidget(x, y, name), matchers};
+		} else if (type == "IconSelectorWidget") {
+			std::vector<std::pair<std::pair<int, int>, std::filesystem::path>> ranges_and_icons;
+			for (const auto& range_icon : widget_j.at("ranges_and_icons")) {
+				int range_start = range_icon.at("range")[0];
+				int range_end = range_icon.at("range")[1];
+				std::filesystem::path icon_path = range_icon.at("icon_path");
+				ranges_and_icons.push_back({{range_start, range_end}, icon_path});
+			}
+			return {new IconSelectorWidget(x, y, ranges_and_icons, assets_dir), matchers};
+		} else if (type == "TplTextWidget") {
+			auto tpl = widget_j.at("template").template get<std::string>();
+			return {new TplTextWidget(x, y, tpl, (uint)matchers.size()), matchers};
+		} else if(type == "IconTplTextWidget") {
+			auto tpl = widget_j.at("template").template get<std::string>();
+			auto icon_path = widget_j.at("icon_path").template get<std::filesystem::path>();
+			cairo_surface_t *icon = openIcon(name, assets_dir, icon_path);
+			if (icon == NULL) return {nullptr, {}};
+			return {new IconTplTextWidget(x, y, icon, tpl, (uint)matchers.size()), matchers};
+		} else if(type == "DvrStatusWidget") {
+			auto text = widget_j.at("text").template get<std::string>();
+			auto icon_path = widget_j.at("icon_path").template get<std::filesystem::path>();
+			cairo_surface_t *icon = openIcon(name, assets_dir, icon_path);
+			if (icon == NULL) return {nullptr, {}};
+			return {new DvrStatusWidget(x, y, icon, text), matchers};
+		} else if(type == "VideoWidget") {
+			auto tpl = widget_j.at("template").template get<std::string>();
+			auto icon_path = widget_j.at("icon_path").template get<std::filesystem::path>();
+			uint window_size_s = widget_j.at("per_second_window_s").template get<uint>();
+			uint bucket_size_ms = widget_j.at("per_second_bucket_ms").template get<uint>();
+			cairo_surface_t *icon = openIcon(name, assets_dir, icon_path);
+			if (icon == NULL) return {nullptr, {}};
+			uint frame_idx = 0;
+			for (uint i = 0; i < matchers.size(); i++) {
+				if (matchers[i].name == "video.displayed_frame") { frame_idx = i; break; }
+			}
+			return {new VideoWidget(x, y, window_size_s * 1000, bucket_size_ms, icon, tpl, (uint)matchers.size(), frame_idx), matchers};
+		} else if(type == "VideoBitrateWidget") {
+			auto tpl = widget_j.at("template").template get<std::string>();
+			auto icon_path = widget_j.at("icon_path").template get<std::filesystem::path>();
+			uint window_size_s = widget_j.at("per_second_window_s").template get<uint>();
+			uint bucket_size_ms = widget_j.at("per_second_bucket_ms").template get<uint>();
+			cairo_surface_t *icon = openIcon(name, assets_dir, icon_path);
+			if (icon == NULL) return {nullptr, {}};
+			return {new VideoBitrateWidget(x, y, window_size_s * 1000, bucket_size_ms, icon, tpl, (uint)matchers.size()), matchers};
+		} else if(type == "VideoDecodeLatencyWidget") {
+			auto tpl = widget_j.at("template").template get<std::string>();
+			auto icon_path = widget_j.at("icon_path").template get<std::filesystem::path>();
+			uint window_size_s = widget_j.at("per_second_window_s").template get<uint>();
+			uint bucket_size_ms = widget_j.at("per_second_bucket_ms").template get<uint>();
+			cairo_surface_t *icon = openIcon(name, assets_dir, icon_path);
+			if (icon == NULL) return {nullptr, {}};
+			return {new VideoDecodeLatencyWidget(x, y, window_size_s * 1000, bucket_size_ms, icon, tpl, 1), matchers};
+		} else if(type == "BoxWidget") {
+			auto width = widget_j.at("width").template get<uint>();
+			auto height = widget_j.at("height").template get<uint>();
+			json color_j = widget_j.at("color");
+			auto r = color_j.at("r").template get<double>();
+			auto g = color_j.at("g").template get<double>();
+			auto b = color_j.at("b").template get<double>();
+			auto a = color_j.at("alpha").template get<double>();
+			return {new BoxWidget(x, y, width, height, r, g, b, a), matchers};
+		} else if(type == "BoxWidgetContainer") {
+			auto width = widget_j.at("width").template get<uint>();
+			auto height = widget_j.at("height").template get<uint>();
+			json color_j = widget_j.at("color");
+			auto r = color_j.at("r").template get<double>();
+			auto g = color_j.at("g").template get<double>();
+			auto b = color_j.at("b").template get<double>();
+			auto a = color_j.at("alpha").template get<double>();
+			auto* container = new BoxWidgetContainer(x, y, width, height, r, g, b, a);
+			std::vector<FactMatcher> all_child_matchers;
+			if (widget_j.contains("widgets")) {
+				for (const json& child_j : widget_j.at("widgets")) {
+					auto [child, child_matchers] = parseOneWidget(child_j, assets_dir);
+					if (child) {
+						container->addChild(child, child_matchers);
+						for (auto& m : child_matchers)
+							all_child_matchers.push_back(m.routing_copy());
+					}
+				}
+			}
+			return {container, all_child_matchers};
+		} else if(type == "BarChartWidget") {
+			auto width = widget_j.at("width").template get<uint>();
+			auto height = widget_j.at("height").template get<uint>();
+			auto window_s = widget_j.at("window_s").template get<uint>();
+			auto num_buckets = widget_j.at("num_buckets").template get<uint>();
+			auto stats_kind_str = widget_j.at("stats_kind").template get<std::string>();
+			BarChartWidget::StatsField stats_kind;
+			if (stats_kind_str == "sum") {
+				stats_kind = BarChartWidget::STATS_SUM;
+			} else if (stats_kind_str == "min") {
+				stats_kind = BarChartWidget::STATS_MIN;
+			} else if (stats_kind_str == "max") {
+				stats_kind = BarChartWidget::STATS_MAX;
+			} else if (stats_kind_str == "count") {
+				stats_kind = BarChartWidget::STATS_COUNT;
+			} else if (stats_kind_str == "avg") {
+				stats_kind = BarChartWidget::STATS_AVG;
+			} else {
+				SPDLOG_WARN("{}: invalid stats_kind {}", name, stats_kind_str);
+				return {nullptr, {}};
+			}
+			return {new BarChartWidget(x, y, width, height, window_s, num_buckets, stats_kind), matchers};
+		} else if (type == "GPSWidget") {
+			return {new GPSWidget(x, y, (uint)matchers.size()), matchers};
+		} else if (type == "BatteryCellWidget") {
+			int critical_mv = 3500;
+			int max_mv = 4200;
+			int num_cells = -1;
+			auto tpl = widget_j.at("template").template get<std::string>();
+			if (widget_j.contains("critical_voltage")) {
+				critical_mv = (int)(widget_j.at("critical_voltage").template get<float>() * 1000);
+			}
+			if (widget_j.contains("max_voltage")) {
+				max_mv = (int)(widget_j.at("max_voltage").template get<float>() * 1000);
+			}
+			if (widget_j.contains("num_cells")) {
+				std::string cells = widget_j["num_cells"];
+				if (cells == "auto") {
+					num_cells = 0;
+				} else if (cells == "even") {
+					num_cells = -1;
+				} else {
+					num_cells = widget_j["num_cells"].get<int>();
+				}
+			}
+			assert(critical_mv < max_mv);
+			return {new BatteryCellWidget(x, y, critical_mv, max_mv, num_cells, tpl, (uint)matchers.size()), matchers};
+		} else if (type == "PopupWidget") {
+			auto timeout_ms = widget_j.at("timeout_ms").template get<uint>();
+			return {new PopupWidget(x, y, timeout_ms, (uint)matchers.size()), matchers};
+		} else if (type == "DebugWidget") {
+			return {new DebugWidget(x, y, (uint)matchers.size()), matchers};
+		} else {
+			spdlog::warn("Widget '{}': unknown type: {}", name, type);
+			return {nullptr, {}};
+		}
 	}
 
 	std::vector<Widget *> widgets;
@@ -2109,7 +2289,11 @@ void *__OSD_THREAD__(void *param) {
 	Osd *osd = new Osd;
 	pthread_setname_np(pthread_self(), "__OSD");
 
-	osd->loadConfig(p->config);
+	try {
+		osd->loadConfig(p->config);
+	} catch (const std::exception& e) {
+		spdlog::error("OSD config load failed: {} — running with empty OSD", e.what());
+	}
 	auto last_display_at = std::chrono::steady_clock::now();
 
 	int ret = pthread_mutex_init(&osd_mutex, NULL);
@@ -2130,6 +2314,7 @@ void *__OSD_THREAD__(void *param) {
 	}
 
 	while (!osd_thread_signal) {
+		try {
 
 		if (gsmenu_enabled) {
 			handle_keyboard_input();
@@ -2173,7 +2358,7 @@ void *__OSD_THREAD__(void *param) {
 				}
 
 				int ret = pthread_mutex_lock(&osd_mutex);
-				assert(!ret);	
+				assert(!ret);
 				p->out->osd_buf_switch = buf_idx;
 				ret = pthread_mutex_unlock(&osd_mutex);
 				assert(!ret);
@@ -2195,6 +2380,12 @@ void *__OSD_THREAD__(void *param) {
 			} else {
 				usleep(5000);
 			}
+		}
+
+		} catch (const std::exception& e) {
+			spdlog::error("OSD thread exception (continuing): {}", e.what());
+		} catch (...) {
+			spdlog::error("OSD thread unknown exception (continuing)");
 		}
     }
 	spdlog::info("OSD thread done.");

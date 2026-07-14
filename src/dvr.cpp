@@ -271,10 +271,12 @@ int Dvr::start() {
 	std::string paddedNumber = "";
 
 	// Ensure the directory exists
-	if (!fs::exists(rec_dir))
 	{
-		spdlog::error("Error: Directory does not exist: {}", rec_dir);
-		return -1;
+		std::error_code ec;
+		if (!fs::exists(rec_dir, ec) || ec) {
+			spdlog::error("DVR: directory not available: {} ({})", rec_dir, ec.message());
+			return -1;
+		}
 	}
 
 	if (dvr_filenames_with_sequence) {
@@ -283,7 +285,8 @@ int Dvr::start() {
 		int maxNumber = -1;
 		int nextFileNumber = 0;
 
-		for (const auto &entry : fs::directory_iterator(rec_dir)) {
+		std::error_code ec;
+		for (const auto &entry : fs::directory_iterator(rec_dir, ec)) {
 			if (entry.is_regular_file())
 			{
 				std::string filename = entry.path().filename().string();
@@ -295,6 +298,10 @@ int Dvr::start() {
 					maxNumber = std::max(maxNumber, number);
 				}
 			}
+		}
+		if (ec) {
+			spdlog::error("DVR: error reading directory {}: {}", rec_dir, ec.message());
+			return -1;
 		}
 		if (maxNumber == -1) {
 			nextFileNumber = 0;

@@ -6,6 +6,11 @@
 #include <unistd.h>
 #include <errno.h>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <sys/select.h>
+
+#include <gst/app/gstappsrc.h>
 
 #include <xf86drm.h>
 #include <xf86drmMode.h>
@@ -24,8 +29,10 @@ static uint64_t get_time_ms() {
     return (uint64_t)spec.tv_sec * 1000 + spec.tv_nsec / 1000000;
 }
 
-StreamPipeline::StreamPipeline(int index, int udp_port, VideoCodec codec, int drm_fd, struct modeset_output *output_list)
-    : index_(index), udp_port_(udp_port), codec_(codec), drm_fd_(drm_fd), output_list_(output_list) {}
+StreamPipeline::StreamPipeline(int index, int udp_port, const std::string& unix_socket,
+                               VideoCodec codec, int drm_fd, struct modeset_output *output_list)
+    : index_(index), udp_port_(udp_port), unix_socket_(unix_socket),
+      codec_(codec), drm_fd_(drm_fd), output_list_(output_list) {}
 
 StreamPipeline::~StreamPipeline() {
     stop();
@@ -42,6 +49,9 @@ void StreamPipeline::start() {
 void StreamPipeline::stop() {
     if (!running_.load()) return;
     running_ = false;
+    sock_running_ = false;
+    if (sock_thread_.joinable()) sock_thread_.join();
+    if (sock_fd_ >= 0) { close(sock_fd_); sock_fd_ = -1; }
     if (pipeline_) gst_element_set_state(pipeline_, GST_STATE_NULL);
     if (gst_thread_.joinable()) gst_thread_.join();
     if (decode_thread_.joinable()) decode_thread_.join();
@@ -52,6 +62,7 @@ void StreamPipeline::stop() {
     if (ctx_) { mpp_destroy(ctx_); ctx_ = nullptr; }
     if (restream_.valve) { gst_object_unref(restream_.valve); restream_.valve = nullptr; }
     if (restream_.sink)  { gst_object_unref(restream_.sink);  restream_.sink  = nullptr; }
+    if (appsrc_) { gst_object_unref(appsrc_); appsrc_ = nullptr; }
     if (pipeline_) { gst_object_unref(pipeline_); pipeline_ = nullptr; }
 }
 
@@ -110,24 +121,34 @@ void StreamPipeline::start_gst() {
     const char *enc_name = (codec_ == VideoCodec::H264) ? "H264" : "H265";
     const char *caps_fmt = (codec_ == VideoCodec::H264) ? "h264" : "h265";
     int rport = (restream_.port > 0) ? restream_.port : (5600 + index_);
-    // Use the configured IP if known at build time; otherwise 0.0.0.0 (valve stays closed).
     const char *rhost = restream_.ip.empty() ? "0.0.0.0" : restream_.ip.c_str();
 
-    // Tee is placed after depay+parse so the restream branch sends raw
-    // H.265/H.264 byte-stream (no RTP wrapper), compatible with QGC's
-    // "UDP H.265/H.264 Video Stream" mode.
     char pipeline_str[1024];
-    snprintf(pipeline_str, sizeof(pipeline_str),
-        "udpsrc port=%d caps=\"application/x-rtp, media=(string)video, "
-        "encoding-name=(string)%s, clock-rate=(int)90000\" ! "
-        "%s ! %s config-interval=-1 ! "
-        "tee name=bs_tee "
-        "bs_tee. ! video/x-%s,stream-format=byte-stream,alignment=au ! "
-        "appsink drop=true sync=false name=out_appsink "
-        "bs_tee. ! valve name=restream_valve drop=true"
-        " ! queue leaky=downstream max-size-buffers=0 max-size-bytes=0 max-size-time=1000000000 silent=true"
-        " ! udpsink name=restream_sink host=%s port=%d sync=false async=false qos=false",
-        udp_port_, enc_name, depay, parse, caps_fmt, rhost, rport);
+    if (unix_socket_.empty()) {
+        snprintf(pipeline_str, sizeof(pipeline_str),
+            "udpsrc port=%d caps=\"application/x-rtp, media=(string)video, "
+            "encoding-name=(string)%s, clock-rate=(int)90000\" ! "
+            "%s ! %s config-interval=-1 ! "
+            "tee name=bs_tee "
+            "bs_tee. ! video/x-%s,stream-format=byte-stream,alignment=au ! "
+            "appsink drop=true sync=false name=out_appsink "
+            "bs_tee. ! valve name=restream_valve drop=true"
+            " ! queue leaky=downstream max-size-buffers=0 max-size-bytes=0 max-size-time=1000000000 silent=true"
+            " ! udpsink name=restream_sink host=%s port=%d sync=false async=false qos=false",
+            udp_port_, enc_name, depay, parse, caps_fmt, rhost, rport);
+    } else {
+        snprintf(pipeline_str, sizeof(pipeline_str),
+            "appsrc name=appsrc caps=\"application/x-rtp, media=(string)video, "
+            "encoding-name=(string)%s, clock-rate=(int)90000\" ! "
+            "%s ! %s config-interval=-1 ! "
+            "tee name=bs_tee "
+            "bs_tee. ! video/x-%s,stream-format=byte-stream,alignment=au ! "
+            "appsink drop=true sync=false name=out_appsink "
+            "bs_tee. ! valve name=restream_valve drop=true"
+            " ! queue leaky=downstream max-size-buffers=0 max-size-bytes=0 max-size-time=1000000000 silent=true"
+            " ! udpsink name=restream_sink host=%s port=%d sync=false async=false qos=false",
+            enc_name, depay, parse, caps_fmt, rhost, rport);
+    }
 
     spdlog::info("[stream {}] pipeline: {}", index_, pipeline_str);
     GError *error = nullptr;
@@ -154,7 +175,86 @@ void StreamPipeline::start_gst() {
         spdlog::info("[stream {}] restream → {}:{}", index_, restream_.ip, rport);
     }
 
-    spdlog::info("[stream {}] listening on udp:{} ({})", index_, udp_port_, enc_name);
+    if (!unix_socket_.empty()) {
+        appsrc_ = gst_bin_get_by_name(GST_BIN(pipeline_), "appsrc");
+        if (!appsrc_) {
+            spdlog::error("[stream {}] failed to get appsrc element", index_);
+            return;
+        }
+        g_object_set(appsrc_, "stream-type", 0, "is-live", TRUE,
+                     "format", GST_FORMAT_TIME, "block", FALSE, "do-timestamp", TRUE, nullptr);
+
+        GstBufferPool *pool = gst_buffer_pool_new();
+        GstStructure *pool_cfg = gst_buffer_pool_get_config(pool);
+        GstCaps *caps = gst_caps_new_simple("application/x-rtp",
+            "media", G_TYPE_STRING, "video",
+            "encoding-name", G_TYPE_STRING, enc_name, nullptr);
+        gst_buffer_pool_config_set_params(pool_cfg, caps, 65536, 10, 20);
+        gst_buffer_pool_set_config(pool, pool_cfg);
+        gst_caps_unref(caps);
+        if (gst_buffer_pool_set_active(pool, TRUE)) {
+            g_object_set_data(G_OBJECT(appsrc_), "buffer-pool", pool);
+        } else {
+            spdlog::error("[stream {}] failed to activate buffer pool", index_);
+            gst_object_unref(pool);
+        }
+
+        sock_fd_ = socket(AF_UNIX, SOCK_DGRAM, 0);
+        if (sock_fd_ < 0) {
+            spdlog::error("[stream {}] unix socket() failed: {}", index_, strerror(errno));
+            return;
+        }
+        struct sockaddr_un addr = {};
+        addr.sun_family = AF_UNIX;
+        addr.sun_path[0] = '\0';
+        strncpy(addr.sun_path + 1, unix_socket_.c_str(), sizeof(addr.sun_path) - 2);
+        socklen_t addr_len = (socklen_t)(sizeof(addr.sun_family) + 1 + unix_socket_.size());
+        if (bind(sock_fd_, (struct sockaddr *)&addr, addr_len) < 0) {
+            spdlog::error("[stream {}] unix socket bind(@{}) failed: {}", index_, unix_socket_, strerror(errno));
+            close(sock_fd_); sock_fd_ = -1;
+            return;
+        }
+
+        sock_running_ = true;
+        sock_thread_ = std::thread([this]() {
+            pthread_setname_np(pthread_self(), "sp-sock-rd");
+            loop_unix_socket();
+        });
+        spdlog::info("[stream {}] listening on unix:@{} ({})", index_, unix_socket_, enc_name);
+    } else {
+        spdlog::info("[stream {}] listening on udp:{} ({})", index_, udp_port_, enc_name);
+    }
+}
+
+void StreamPipeline::loop_unix_socket() {
+    GstBufferPool *pool = GST_BUFFER_POOL(g_object_get_data(G_OBJECT(appsrc_), "buffer-pool"));
+    constexpr int kPollMs = 100;
+    constexpr int kRtpMinLen = 12;
+
+    while (sock_running_.load()) {
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        FD_SET(sock_fd_, &rfds);
+        struct timeval tv = { 0, kPollMs * 1000 };
+        if (select(sock_fd_ + 1, &rfds, nullptr, nullptr, &tv) <= 0) continue;
+
+        GstBuffer *buf = nullptr;
+        if (gst_buffer_pool_acquire_buffer(pool, &buf, nullptr) != GST_FLOW_OK || !buf) continue;
+
+        GstMapInfo map;
+        if (!gst_buffer_map(buf, &map, GST_MAP_WRITE)) { gst_buffer_unref(buf); continue; }
+        ssize_t n = recv(sock_fd_, map.data, map.size, 0);
+        gst_buffer_unmap(buf, &map);
+
+        if (n <= kRtpMinLen) { gst_buffer_unref(buf); continue; }
+        gst_buffer_resize(buf, 0, n);
+        if (gst_app_src_push_buffer(GST_APP_SRC(appsrc_), buf) != GST_FLOW_OK) break;
+    }
+
+    if (pool) {
+        gst_buffer_pool_set_active(pool, FALSE);
+        gst_object_unref(pool);
+    }
 }
 
 void StreamPipeline::restream_configure(const std::string& ip, int port) {

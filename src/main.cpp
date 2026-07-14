@@ -1325,7 +1325,7 @@ int main(int argc, char **argv)
 	// Multistream switcher: one entry per --stream flag. Empty means legacy
 	// single-stream mode (-p/--codec), preserving today's exact behavior --
 	// see stream_manager.h for the new path, only taken when non-empty.
-	struct StreamArg { int port; VideoCodec stream_codec; };
+	struct StreamArg { int port; std::string unix_socket; VideoCodec stream_codec; };
 	std::vector<StreamArg> stream_args;
 	std::unique_ptr<StreamManager> stream_manager;
 
@@ -1364,13 +1364,13 @@ int main(int argc, char **argv)
 		continue;
 	}
 
-	// --stream <port>[:<codec>], repeatable. Any --stream flag present at
-	// all switches the whole process into multistream-switcher mode,
-	// ignoring -p entirely (see stream_args branch further below) --
-	// codec, if omitted, resolves against --codec's value (whatever it
-	// ends up being after the whole argv is parsed, not just up to here).
+	// --stream <port>[:<codec>] or --stream @<socket>[:<codec>], repeatable.
+	// Any --stream flag present at all switches the whole process into
+	// multistream-switcher mode, ignoring -p entirely (see stream_args branch
+	// further below) -- codec, if omitted, resolves against --codec's value
+	// (whatever it ends up being after the whole argv is parsed).
 	__OnArgument("--stream") {
-		char buf[64];
+		char buf[128];
 		const char *arg = __ArgValue;
 		if (strlen(arg) >= sizeof(buf)) {
 			fprintf(stderr, "--stream argument too long: %s\n", arg);
@@ -1387,12 +1387,21 @@ int main(int argc, char **argv)
 				return -1;
 			}
 		}
-		int port = atoi(buf);
-		if (port <= 0) {
-			fprintf(stderr, "invalid port in --stream %s\n", arg);
-			return -1;
+		if (buf[0] == '@') {
+			// Abstract unix socket: @socket_name[:codec]
+			if (buf[1] == '\0') {
+				fprintf(stderr, "--stream @<name>: socket name cannot be empty\n");
+				return -1;
+			}
+			stream_args.push_back({0, std::string(buf + 1), stream_codec});
+		} else {
+			int port = atoi(buf);
+			if (port <= 0) {
+				fprintf(stderr, "invalid port in --stream %s\n", arg);
+				return -1;
+			}
+			stream_args.push_back({port, std::string(), stream_codec});
 		}
-		stream_args.push_back({port, stream_codec});
 		continue;
 	}
 
@@ -2190,7 +2199,7 @@ int main(int argc, char **argv)
 		nlohmann::json osd_config;
 		if(osd_config_path != "") {
 			std::ifstream f(osd_config_path);
-			osd_config = nlohmann::json::parse(f);
+			osd_config = nlohmann::json::parse(f, nullptr, true, true);
 		} else {
 			osd_config = {};
 		}
@@ -2230,9 +2239,13 @@ int main(int argc, char **argv)
 		stream_manager = std::make_unique<StreamManager>(drm_fd, output_list, video_zpos);
 		g_stream_manager = stream_manager.get();
 		for (auto &sa : stream_args) {
-			stream_manager->add_stream(sa.port, sa.stream_codec);
-			spdlog::info("stream {}: udp:{} codec={}", stream_manager->stream_count() - 1, sa.port,
-			             sa.stream_codec == VideoCodec::H264 ? "h264" : "h265");
+			stream_manager->add_stream(sa.port, sa.unix_socket, sa.stream_codec);
+			int sidx = stream_manager->stream_count() - 1;
+			const char *cname = sa.stream_codec == VideoCodec::H264 ? "h264" : "h265";
+			if (sa.unix_socket.empty())
+				spdlog::info("stream {}: udp:{} codec={}", sidx, sa.port, cname);
+			else
+				spdlog::info("stream {}: unix:@{} codec={}", sidx, sa.unix_socket, cname);
 		}
 
 		// Wire per-stream restream targets from --restream args

@@ -30,8 +30,9 @@ class StreamManager {
 public:
     StreamManager(int drm_fd, struct modeset_output *output_list, int video_zpos);
 
-    // port[:codec] already parsed by the caller (see main.cpp's CLI parsing).
-    void add_stream(int udp_port, VideoCodec codec);
+    // udp_port or unix_socket (abstract AF_UNIX socket name without @), plus codec.
+    // Pass unix_socket="" to use UDP; pass udp_port=0 when using unix_socket.
+    void add_stream(int udp_port, const std::string& unix_socket, VideoCodec codec);
 
     // Starts every configured stream's decode pipeline and activates the
     // first one. Call after all add_stream() calls.

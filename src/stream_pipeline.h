@@ -36,7 +36,10 @@ extern "C" {
 
 class StreamPipeline {
 public:
-    StreamPipeline(int index, int udp_port, VideoCodec codec, int drm_fd, struct modeset_output *output_list);
+    // unix_socket: if non-empty, receive RTP from abstract AF_UNIX socket @name
+    //              instead of UDP port. udp_port is ignored in that case.
+    StreamPipeline(int index, int udp_port, const std::string& unix_socket,
+                   VideoCodec codec, int drm_fd, struct modeset_output *output_list);
     ~StreamPipeline();
 
     void start();
@@ -46,6 +49,7 @@ public:
     bool is_active() const { return active_.load(); }
     int index() const { return index_; }
     int udp_port() const { return udp_port_; }
+    const std::string& unix_socket() const { return unix_socket_; }
     VideoCodec codec() const { return codec_; }
 
     // Invoked from decode_loop() only when is_active() is true at the
@@ -113,6 +117,7 @@ private:
 
     int index_;
     int udp_port_;
+    std::string unix_socket_;
     VideoCodec codec_;
     int drm_fd_;
     struct modeset_output *output_list_;
@@ -120,6 +125,10 @@ private:
 
     GstElement *pipeline_ = nullptr;
     GstElement *appsink_ = nullptr;
+    GstElement *appsrc_ = nullptr;
+    int sock_fd_ = -1;
+    std::atomic<bool> sock_running_{false};
+    std::thread sock_thread_;
 
     MppCtx ctx_ = nullptr;
     MppApi *mpi_ = nullptr;
@@ -149,4 +158,6 @@ private:
     bool first_feed_ok_logged_ = false;
     bool first_feed_fail_logged_ = false;
     uint64_t fed_count_ = 0, feed_fail_count_ = 0, decoded_count_ = 0;
+
+    void loop_unix_socket();
 };

@@ -22,9 +22,9 @@ extern pthread_cond_t video_cond;
 StreamManager::StreamManager(int drm_fd, struct modeset_output *output_list, int video_zpos)
     : drm_fd_(drm_fd), output_list_(output_list), video_zpos_(video_zpos) {}
 
-void StreamManager::add_stream(int udp_port, VideoCodec codec) {
+void StreamManager::add_stream(int udp_port, const std::string& unix_socket, VideoCodec codec) {
     int idx = (int)streams_.size();
-    auto sp = std::make_unique<StreamPipeline>(idx, udp_port, codec, drm_fd_, output_list_);
+    auto sp = std::make_unique<StreamPipeline>(idx, udp_port, unix_socket, codec, drm_fd_, output_list_);
 
     sp->set_active_frame_cb([this, idx](uint32_t fb_id, uint64_t pts) {
         // Serialize all decode-thread callbacks: the active_index_ check and
@@ -73,6 +73,7 @@ void StreamManager::start_all() {
     if (streams_.empty()) return;
     streams_[0]->set_active(true);
     active_index_ = 0;
+    osd_publish_uint_fact("video.index", NULL, 0, 0);
     for (auto &s : streams_) s->start();
 }
 
@@ -87,6 +88,7 @@ void StreamManager::switch_to(int idx) {
     active_index_ = idx;
     streams_[old_idx]->set_active(false);
     spdlog::info("[switcher] switching stream {} -> {}", old_idx, idx);
+    osd_publish_uint_fact("video.index", NULL, 0, (ulong)idx);
     uint32_t w = streams_[idx]->frame_width();
     uint32_t h = streams_[idx]->frame_height();
     if (w && h) {

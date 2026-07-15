@@ -2266,8 +2266,8 @@ public:
             draw_ring_marker(cr, cx, cy, r_inner, abs_home, home_r_, home_g_, home_b_, "H");
             if (home_dist_ >= 0.0) {
                 std::string ds = fmt_dist(home_dist_);
-                double lx = bearing_x(cx, r_inner - 20.0, abs_home);
-                double ly = bearing_y(cy, r_inner - 20.0, abs_home);
+                double lx = bearing_x(cx, r_inner - 32.0, abs_home);
+                double ly = bearing_y(cy, r_inner - 32.0, abs_home);
                 cairo_select_font_face(cr, "Roboto", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
                 cairo_set_font_size(cr, 9.0);
                 cairo_text_extents_t ext;
@@ -2500,13 +2500,15 @@ public:
                             double sky_r, double sky_g, double sky_b,
                             double gnd_r, double gnd_g, double gnd_b,
                             double pitch_range_deg, int ladder_interval,
-                            double camera_tilt_deg, bool show_roll_arc)
+                            double camera_tilt_deg, bool show_roll_arc,
+                            double bg_alpha)
         : Widget(pos_x, pos_y, 0),
           width_(width), height_(height),
           sky_r_(sky_r), sky_g_(sky_g), sky_b_(sky_b),
           gnd_r_(gnd_r), gnd_g_(gnd_g), gnd_b_(gnd_b),
           pitch_range_deg_(pitch_range_deg), ladder_interval_(ladder_interval),
-          camera_tilt_deg_(camera_tilt_deg), show_roll_arc_(show_roll_arc) {}
+          camera_tilt_deg_(camera_tilt_deg), show_roll_arc_(show_roll_arc),
+          bg_alpha_(bg_alpha) {}
 
     void setFact(uint idx, Fact fact) override {
         if (idx == 0) {
@@ -2542,12 +2544,12 @@ public:
         double horizon_y = eff_pitch * pix_per_deg;
 
         // Sky
-        cairo_set_source_rgb(cr, sky_r_, sky_g_, sky_b_);
+        cairo_set_source_rgba(cr, sky_r_, sky_g_, sky_b_, bg_alpha_);
         cairo_rectangle(cr, -large, -large, large * 2.0, large + horizon_y);
         cairo_fill(cr);
 
         // Ground
-        cairo_set_source_rgb(cr, gnd_r_, gnd_g_, gnd_b_);
+        cairo_set_source_rgba(cr, gnd_r_, gnd_g_, gnd_b_, bg_alpha_);
         cairo_rectangle(cr, -large, horizon_y, large * 2.0, large);
         cairo_fill(cr);
 
@@ -2673,6 +2675,7 @@ private:
     int    ladder_interval_;
     double camera_tilt_deg_;
     bool   show_roll_arc_;
+    double bg_alpha_;
     double roll_rad_  = 0.0;
     double pitch_rad_ = 0.0;
 };
@@ -3104,8 +3107,9 @@ private:
 				auto gc = widget_j.at("ground_color");
 				gr = gc.value("r", 0.35); gg = gc.value("g", 0.20); gb = gc.value("b", 0.05);
 			}
+			double ah_alpha = widget_j.value("bg_alpha", 0.65);
 			return {new ArtificialHorizonWidget(x, y, w, h, sr, sg, sb, gr, gg, gb,
-			                                    pr, li, ct, sra), matchers};
+			                                    pr, li, ct, sra, ah_alpha), matchers};
 		} else if (type == "VerticalTapeWidget") {
 			int w  = widget_j.value("width",  80);
 			int h  = widget_j.value("height", 250);

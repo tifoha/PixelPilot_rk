@@ -134,6 +134,7 @@
       "pitch_range": 30,
       "ladder_interval": 10,
       "show_roll_arc": true,
+      "bg_alpha": 0.1,
       "sky_color":    { "r": 0.10, "g": 0.28, "b": 0.58 },
       "ground_color": { "r": 0.32, "g": 0.18, "b": 0.04 },
       "facts": [
@@ -144,7 +145,7 @@
     {
       "name": "SpeedTape",
       "type": "VerticalTapeWidget",
-      "x": 680,
+      "x": 300,
       "y": 120,
       "width": 80,
       "height": 250,
@@ -182,7 +183,9 @@
         { "name": "mavlink.vfr_hud.heading" },
         { "name": "mavlink.home.bearing_relative" },
         { "name": "mavlink.wind.direction" },
-        { "name": "mavlink.wind.speed" }
+        { "name": "mavlink.wind.speed" },
+        { "name": "mavlink.vfr_hud.alt" },
+        { "name": "mavlink.vfr_hud.airspeed" }
 //        { "name": "mavlink.heartbeet.base_mode.armed" },
 //        { "name": "mavlink.vfr_hud.throttle" },
 //        { "name": "mavlink.attitude.roll",  "convert": "deg(x)" },

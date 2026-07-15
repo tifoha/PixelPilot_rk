@@ -937,11 +937,16 @@ public:
 		cairo_surface_t *target = cairo_get_target(cr);
 		int w = cairo_image_surface_get_width(target);
 		int h = cairo_image_surface_get_height(target);
-		return std::pair((w + pos_x) % w, (h + pos_y) % h);
+		int rx = center_x_ ? (w - own_width_) / 2 : (w + pos_x) % w;
+		return std::pair(rx, (h + pos_y) % h);
 	}
+
+	void set_center_x(int widget_width) { center_x_ = true; own_width_ = widget_width; }
 
 protected:
 	int pos_x, pos_y;
+	bool center_x_ = false;
+	int own_width_ = 0;
 	std::vector<Fact> args;
 };
 
@@ -2223,12 +2228,12 @@ public:
         // Home marker — filled triangle on the inner ring edge pointing inward
         if (show_home_ && home_bearing_ > -990.0) {
             double abs_home = fmod(heading_ + home_bearing_ + 3600.0, 360.0);
-            draw_ring_marker(cr, cx, cy, r_inner, abs_home, home_r_, home_g_, home_b_, true);
+            draw_ring_marker(cr, cx, cy, r_inner, abs_home, home_r_, home_g_, home_b_, "H");
         }
 
         // Wind marker — elongated inward arrow at the "from" direction
         if (show_wind_ && wind_dir_ > -990.0) {
-            draw_ring_marker(cr, cx, cy, r_inner, wind_dir_, wind_r_, wind_g_, wind_b_, false);
+            draw_ring_marker(cr, cx, cy, r_inner, wind_dir_, wind_r_, wind_g_, wind_b_, "~");
             // Wind speed label next to marker
             if (wind_speed_ > -0.5) {
                 char wbuf[16];
@@ -2277,16 +2282,14 @@ private:
         return cy - r * cos(b * M_PI / 180.0);
     }
 
-    // Small triangle marker pointing inward from the ring at bearing b
-    // triangle=true → filled triangle; false → narrow diamond/arrow
+    // Small triangle marker pointing inward from the ring at bearing b, with optional label
     void draw_ring_marker(cairo_t *cr, double cx, double cy, double r_inner,
-                          double b, double mr, double mg, double mb, bool triangle) {
+                          double b, double mr, double mg, double mb, const char* label = nullptr) {
         double br = b * M_PI / 180.0;
         double sin_b = sin(br), cos_b = cos(br);
-        // Tip at r_inner - 4, base at r_inner + 5 (slightly inside ring outer edge)
         double tip_r  = r_inner - 5.0;
         double base_r = r_inner + 4.0;
-        double half_w = triangle ? 6.0 : 3.5;
+        double half_w = 6.0;
 
         // Tip point
         double tx = cx + tip_r  * sin_b;
@@ -2304,6 +2307,19 @@ private:
         cairo_line_to(cr, bx - px * half_w, by - py * half_w);
         cairo_close_path(cr);
         cairo_fill(cr);
+
+        if (label) {
+            // Small label just inside the triangle tip, centered at bearing
+            double lx = cx + (tip_r - 8.0) * sin_b;
+            double ly = cy - (tip_r - 8.0) * cos_b;
+            cairo_select_font_face(cr, "Roboto", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+            cairo_set_font_size(cr, 8.0);
+            cairo_text_extents_t ext;
+            cairo_text_extents(cr, label, &ext);
+            cairo_set_source_rgba(cr, mr, mg, mb, 1.0);
+            cairo_move_to(cr, lx - ext.width / 2.0 - ext.x_bearing, ly + ext.height / 2.0);
+            cairo_show_text(cr, label);
+        }
     }
 
     // Draw center icon centered at (0,0), pointing "up" (toward -Y), size = half-span
@@ -2628,6 +2644,8 @@ private:
 			auto b = color_j.at("b").template get<double>();
 			auto a = color_j.at("alpha").template get<double>();
 			auto* container = new BoxWidgetContainer(x, y, width, height, r, g, b, a);
+			if (widget_j.value("center_x", false))
+				container->set_center_x(width);
 			std::vector<FactMatcher> all_child_matchers;
 			if (widget_j.contains("widgets")) {
 				for (const json& child_j : widget_j.at("widgets")) {

@@ -285,7 +285,11 @@ void* __MAVLINK_THREAD__(void* arg) {
                   double cur_lon = global_position_int.lon / 1e7;
                   double abs_b = calc_bearing(cur_lat, cur_lon, g_home_lat, g_home_lon);
                   ulong rel_b = (ulong)(((long)abs_b - g_heading_deg + 360) % 360);
-                  osd_publish_uint_fact("mavlink.home.bearing_relative", NULL, 0, rel_b);
+                  double dist_m = distanceEarth(cur_lat, cur_lon, g_home_lat, g_home_lon);
+                  void *hbatch = osd_batch_init(2);
+                  osd_add_uint_fact(hbatch, "mavlink.home.bearing_relative", NULL, 0, rel_b);
+                  osd_add_double_fact(hbatch, "mavlink.home.distance", NULL, 0, dist_m);
+                  osd_publish_batch(hbatch);
               }
             }
             break;

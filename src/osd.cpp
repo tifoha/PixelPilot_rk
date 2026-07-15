@@ -1860,6 +1860,13 @@ private:
     cairo_surface_t* current_icon = nullptr; // Currently selected icon
 };
 
+static std::string fmt_dist(double m) {
+    char buf[16];
+    if (m >= 1000.0) snprintf(buf, sizeof(buf), "%.1fkm", m / 1000.0);
+    else             snprintf(buf, sizeof(buf), "%.0fm",   m);
+    return buf;
+}
+
 class HeadingTapeWidget : public Widget {
 public:
     // label_position: "top" | "middle" | "bottom" — where labels sit inside the tape
@@ -1890,6 +1897,11 @@ public:
             if (fact.getType() == Fact::T_DOUBLE)      home_bearing_ = fact.getDoubleValue();
             else if (fact.getType() == Fact::T_INT)    home_bearing_ = (double)fact.getIntValue();
             else if (fact.getType() == Fact::T_UINT)   home_bearing_ = (double)fact.getUintValue();
+        } else if (idx == 2) {
+            // Home distance in metres
+            if (fact.getType() == Fact::T_DOUBLE)      home_dist_ = fact.getDoubleValue();
+            else if (fact.getType() == Fact::T_INT)    home_dist_ = (double)fact.getIntValue();
+            else if (fact.getType() == Fact::T_UINT)   home_dist_ = (double)fact.getUintValue();
         } else {
             spdlog::error("HeadingTapeWidget: unexpected setFact idx {}", idx);
         }
@@ -2025,7 +2037,7 @@ public:
             cairo_select_font_face(cr, "Roboto", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
             cairo_set_font_size(cr, 14.0);
             if (home_px >= ox && home_px <= ox + width_) {
-                // Fully visible: upward triangle at tape bottom + "H" label below
+                // Fully visible: upward triangle at tape bottom + "H" label + distance below
                 double ty = oy + height_;
                 cairo_move_to(cr, home_px,     ty - 9);
                 cairo_line_to(cr, home_px - 6, ty);
@@ -2036,8 +2048,17 @@ public:
                 cairo_text_extents(cr, "H", &he);
                 cairo_move_to(cr, home_px - he.width / 2.0 - he.x_bearing, ty + he.height + 2.0);
                 cairo_show_text(cr, "H");
+                if (home_dist_ >= 0.0) {
+                    std::string ds = fmt_dist(home_dist_);
+                    cairo_set_font_size(cr, 10.0);
+                    cairo_text_extents_t de;
+                    cairo_text_extents(cr, ds.c_str(), &de);
+                    cairo_move_to(cr, home_px - de.width / 2.0 - de.x_bearing,
+                                      ty + he.height + 2.0 + de.height + 2.0);
+                    cairo_show_text(cr, ds.c_str());
+                }
             } else {
-                // Off-screen: arrow at edge + "H" beside it
+                // Off-screen: arrow at edge + "H" + distance beside it
                 double edge_x = (home_px < ox) ? ox + 4 : ox + width_ - 4;
                 double ey = oy + height_ - 6;
                 double dir = (home_px < ox) ? -1.0 : 1.0;
@@ -2051,6 +2072,15 @@ public:
                 double label_x = (home_px < ox) ? edge_x + 8 : edge_x - 8 - he.width - he.x_bearing;
                 cairo_move_to(cr, label_x, ey + he.height / 2.0);
                 cairo_show_text(cr, "H");
+                if (home_dist_ >= 0.0) {
+                    std::string ds = fmt_dist(home_dist_);
+                    cairo_set_font_size(cr, 10.0);
+                    cairo_text_extents_t de;
+                    cairo_text_extents(cr, ds.c_str(), &de);
+                    double dx = (home_px < ox) ? edge_x + 8 : edge_x - 8 - de.width - de.x_bearing;
+                    cairo_move_to(cr, dx, ey + he.height / 2.0 + de.height + 1.0);
+                    cairo_show_text(cr, ds.c_str());
+                }
             }
         }
 
@@ -2092,7 +2122,8 @@ private:
     bool show_home_;
     double home_r_, home_g_, home_b_;
     int heading_ = 0;
-    double home_bearing_ = -999.0;  // sentinel: not yet received
+    double home_bearing_ = -999.0;
+    double home_dist_    = -1.0;
 };
 
 // ----------------------------------------------------------------------------
@@ -2147,6 +2178,10 @@ public:
             if (fact.getType() == Fact::T_DOUBLE)     wind_speed_ = fact.getDoubleValue();
             else if (fact.getType() == Fact::T_INT)   wind_speed_ = (double)fact.getIntValue();
             else if (fact.getType() == Fact::T_UINT)  wind_speed_ = (double)fact.getUintValue();
+        } else if (idx == 4) {
+            if (fact.getType() == Fact::T_DOUBLE)     home_dist_ = fact.getDoubleValue();
+            else if (fact.getType() == Fact::T_INT)   home_dist_ = (double)fact.getIntValue();
+            else if (fact.getType() == Fact::T_UINT)  home_dist_ = (double)fact.getUintValue();
         } else {
             spdlog::error("CompassWidget: unexpected setFact idx {}", idx);
         }
@@ -2229,6 +2264,18 @@ public:
         if (show_home_ && home_bearing_ > -990.0) {
             double abs_home = fmod(heading_ + home_bearing_ + 3600.0, 360.0);
             draw_ring_marker(cr, cx, cy, r_inner, abs_home, home_r_, home_g_, home_b_, "H");
+            if (home_dist_ >= 0.0) {
+                std::string ds = fmt_dist(home_dist_);
+                double lx = bearing_x(cx, r_inner - 20.0, abs_home);
+                double ly = bearing_y(cy, r_inner - 20.0, abs_home);
+                cairo_select_font_face(cr, "Roboto", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+                cairo_set_font_size(cr, 9.0);
+                cairo_text_extents_t ext;
+                cairo_text_extents(cr, ds.c_str(), &ext);
+                cairo_set_source_rgba(cr, home_r_, home_g_, home_b_, 0.9);
+                cairo_move_to(cr, lx - ext.width / 2.0 - ext.x_bearing, ly + ext.height * 0.4);
+                cairo_show_text(cr, ds.c_str());
+            }
         }
 
         // Wind marker — elongated inward arrow at the "from" direction
@@ -2432,11 +2479,341 @@ private:
 
     int    heading_    = 0;
     double home_bearing_ = -999.0;
+    double home_dist_    = -1.0;
     double wind_dir_   = -999.0;
     double wind_speed_ = -1.0;
 
     cairo_surface_t *icon_surface_ = nullptr;
     bool icon_surface_loaded_ = false;
+};
+
+// ----------------------------------------------------------------------------
+// ArtificialHorizonWidget — EFIS-style attitude indicator
+// Facts: 0=roll (rad)  1=pitch (rad)
+// Config: width, height, pitch_range (deg visible each side), ladder_interval,
+//         camera_tilt (deg, positive = camera points upward),
+//         sky_color, ground_color, show_roll_arc
+// ----------------------------------------------------------------------------
+class ArtificialHorizonWidget : public Widget {
+public:
+    ArtificialHorizonWidget(int pos_x, int pos_y, int width, int height,
+                            double sky_r, double sky_g, double sky_b,
+                            double gnd_r, double gnd_g, double gnd_b,
+                            double pitch_range_deg, int ladder_interval,
+                            double camera_tilt_deg, bool show_roll_arc)
+        : Widget(pos_x, pos_y, 0),
+          width_(width), height_(height),
+          sky_r_(sky_r), sky_g_(sky_g), sky_b_(sky_b),
+          gnd_r_(gnd_r), gnd_g_(gnd_g), gnd_b_(gnd_b),
+          pitch_range_deg_(pitch_range_deg), ladder_interval_(ladder_interval),
+          camera_tilt_deg_(camera_tilt_deg), show_roll_arc_(show_roll_arc) {}
+
+    void setFact(uint idx, Fact fact) override {
+        if (idx == 0) {
+            if (fact.getType() == Fact::T_DOUBLE)     roll_rad_  = fact.getDoubleValue();
+            else if (fact.getType() == Fact::T_INT)   roll_rad_  = (double)fact.getIntValue();
+        } else if (idx == 1) {
+            if (fact.getType() == Fact::T_DOUBLE)     pitch_rad_ = fact.getDoubleValue();
+            else if (fact.getType() == Fact::T_INT)   pitch_rad_ = (double)fact.getIntValue();
+        } else {
+            spdlog::error("ArtificialHorizonWidget: unexpected setFact idx {}", idx);
+        }
+    }
+
+    void draw(cairo_t *cr) override {
+        auto [ox, oy] = xy(cr);
+        double cx = ox + width_ / 2.0;
+        double cy = oy + height_ / 2.0;
+
+        double pitch_deg = pitch_rad_ * 180.0 / M_PI;
+        double eff_pitch = pitch_deg + camera_tilt_deg_;
+        double pix_per_deg = (height_ / 2.0) / pitch_range_deg_;
+        double large = (width_ + height_) * 2.0;
+
+        cairo_save(cr);
+        cairo_rectangle(cr, ox, oy, width_, height_);
+        cairo_clip(cr);
+
+        // === Rotating content (roll + pitch) ===
+        cairo_save(cr);
+        cairo_translate(cr, cx, cy);
+        cairo_rotate(cr, -roll_rad_);
+
+        double horizon_y = eff_pitch * pix_per_deg;
+
+        // Sky
+        cairo_set_source_rgb(cr, sky_r_, sky_g_, sky_b_);
+        cairo_rectangle(cr, -large, -large, large * 2.0, large + horizon_y);
+        cairo_fill(cr);
+
+        // Ground
+        cairo_set_source_rgb(cr, gnd_r_, gnd_g_, gnd_b_);
+        cairo_rectangle(cr, -large, horizon_y, large * 2.0, large);
+        cairo_fill(cr);
+
+        // Horizon line
+        cairo_set_source_rgba(cr, 1, 1, 1, 1.0);
+        cairo_set_line_width(cr, 2.0);
+        cairo_move_to(cr, -large, horizon_y);
+        cairo_line_to(cr,  large, horizon_y);
+        cairo_stroke(cr);
+
+        // Pitch ladder
+        if (ladder_interval_ > 0) {
+            double half_line = width_ * 0.28;
+            int lo = (int)floor((eff_pitch - pitch_range_deg_ * 1.5) / ladder_interval_) * ladder_interval_;
+            int hi = (int)ceil ((eff_pitch + pitch_range_deg_ * 1.5) / ladder_interval_) * ladder_interval_;
+            for (int a = lo; a <= hi; a += ladder_interval_) {
+                if (a == 0) continue;
+                double yl = (eff_pitch - a) * pix_per_deg;
+
+                cairo_set_source_rgba(cr, 1, 1, 1, 0.85);
+                cairo_set_line_width(cr, 1.5);
+                cairo_move_to(cr, -half_line, yl);
+                cairo_line_to(cr,  half_line, yl);
+                cairo_stroke(cr);
+
+                // Chevron tips pointing toward horizon
+                double cd = (a > 0) ? 1.0 : -1.0;
+                double cl = 7.0;
+                cairo_move_to(cr, -half_line,      yl);
+                cairo_line_to(cr, -half_line + cl, yl + cd * cl * 0.55);
+                cairo_stroke(cr);
+                cairo_move_to(cr,  half_line,      yl);
+                cairo_line_to(cr,  half_line - cl, yl + cd * cl * 0.55);
+                cairo_stroke(cr);
+
+                // Degree labels on both sides
+                char lbl[8];
+                snprintf(lbl, sizeof(lbl), "%d", std::abs(a));
+                cairo_select_font_face(cr, "Roboto", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+                cairo_set_font_size(cr, 11.0);
+                cairo_text_extents_t ext;
+                cairo_text_extents(cr, lbl, &ext);
+                cairo_set_source_rgba(cr, 1, 1, 1, 0.85);
+                cairo_move_to(cr, -half_line - ext.width - ext.x_bearing - 5.0,
+                                   yl + ext.height * 0.35);
+                cairo_show_text(cr, lbl);
+                cairo_move_to(cr,  half_line + 5.0 - ext.x_bearing,
+                                   yl + ext.height * 0.35);
+                cairo_show_text(cr, lbl);
+            }
+        }
+
+        cairo_restore(cr); // end rotation
+
+        // === Fixed elements ===
+
+        // Center aircraft symbol (yellow)
+        double arm = width_ * 0.20;
+        double gap = width_ * 0.04;
+        cairo_set_source_rgba(cr, 1.0, 1.0, 0.2, 1.0);
+        cairo_set_line_width(cr, 3.5);
+        cairo_move_to(cr, cx - arm, cy);
+        cairo_line_to(cr, cx - gap, cy);
+        cairo_stroke(cr);
+        cairo_move_to(cr, cx + gap, cy);
+        cairo_line_to(cr, cx + arm, cy);
+        cairo_stroke(cr);
+        // Center tick
+        cairo_set_line_width(cr, 2.5);
+        cairo_move_to(cr, cx, cy - 5);
+        cairo_line_to(cr, cx, cy + 5);
+        cairo_stroke(cr);
+
+        // Roll arc
+        if (show_roll_arc_) {
+            double arc_r = std::min(width_, height_) * 0.42;
+            double a_lo  = -M_PI / 2.0 - 60.0 * M_PI / 180.0;
+            double a_hi  = -M_PI / 2.0 + 60.0 * M_PI / 180.0;
+
+            cairo_set_source_rgba(cr, 1, 1, 1, 0.55);
+            cairo_set_line_width(cr, 1.5);
+            cairo_arc(cr, cx, cy, arc_r, a_lo, a_hi);
+            cairo_stroke(cr);
+
+            // Fixed tick marks
+            int ticks[] = {0, 10, 20, 30, 45, 60, -10, -20, -30, -45, -60};
+            for (int td : ticks) {
+                double ang = -M_PI / 2.0 + td * M_PI / 180.0;
+                double tlen = (td == 0 || std::abs(td) == 30 || std::abs(td) == 60) ? 10.0 : 6.0;
+                double x1 = cx + arc_r * cos(ang);
+                double y1 = cy + arc_r * sin(ang);
+                cairo_set_source_rgba(cr, 1, 1, 1, 0.7);
+                cairo_move_to(cr, x1, y1);
+                cairo_line_to(cr, cx + (arc_r - tlen) * cos(ang),
+                                  cy + (arc_r - tlen) * sin(ang));
+                cairo_stroke(cr);
+            }
+
+            // Moving roll triangle (yellow, follows roll)
+            double tri_ang = -M_PI / 2.0 + roll_rad_;
+            double tip_x   = cx + arc_r * cos(tri_ang);
+            double tip_y   = cy + arc_r * sin(tri_ang);
+            double in_x    = cx + (arc_r - 12.0) * cos(tri_ang);
+            double in_y    = cy + (arc_r - 12.0) * sin(tri_ang);
+            double px      = -sin(tri_ang);
+            double py      =  cos(tri_ang);
+            cairo_set_source_rgba(cr, 1.0, 1.0, 0.2, 1.0);
+            cairo_move_to(cr, tip_x, tip_y);
+            cairo_line_to(cr, in_x + px * 7, in_y + py * 7);
+            cairo_line_to(cr, in_x - px * 7, in_y - py * 7);
+            cairo_close_path(cr);
+            cairo_fill(cr);
+        }
+
+        cairo_restore(cr); // end clip
+    }
+
+private:
+    int width_, height_;
+    double sky_r_, sky_g_, sky_b_;
+    double gnd_r_, gnd_g_, gnd_b_;
+    double pitch_range_deg_;
+    int    ladder_interval_;
+    double camera_tilt_deg_;
+    bool   show_roll_arc_;
+    double roll_rad_  = 0.0;
+    double pitch_rad_ = 0.0;
+};
+
+// ----------------------------------------------------------------------------
+// VerticalTapeWidget — scrolling vertical tape for speed or altitude
+// Facts: 0=value
+// Config: width, height, range (units visible each side), tick_interval,
+//         unit (label string), label_side ("left"|"right"), format (printf)
+// ----------------------------------------------------------------------------
+class VerticalTapeWidget : public Widget {
+public:
+    VerticalTapeWidget(int pos_x, int pos_y, int width, int height,
+                       double range, double tick_interval,
+                       const std::string& unit, const std::string& label_side,
+                       const std::string& format)
+        : Widget(pos_x, pos_y, 0),
+          width_(width), height_(height), range_(range),
+          tick_interval_(tick_interval), unit_(unit),
+          label_side_(label_side), format_(format) {}
+
+    void setFact(uint idx, Fact fact) override {
+        if (idx != 0) { spdlog::error("VerticalTapeWidget: unexpected idx {}", idx); return; }
+        if (fact.getType() == Fact::T_DOUBLE)     value_ = fact.getDoubleValue();
+        else if (fact.getType() == Fact::T_INT)   value_ = (double)fact.getIntValue();
+        else if (fact.getType() == Fact::T_UINT)  value_ = (double)fact.getUintValue();
+        has_value_ = true;
+    }
+
+    void draw(cairo_t *cr) override {
+        if (!has_value_) return;
+
+        auto [ox, oy] = xy(cr);
+        double cy = oy + height_ / 2.0;
+        double ppu = (height_ / 2.0) / range_;
+        bool labels_right = (label_side_ != "left");
+
+        // Background
+        cairo_set_source_rgba(cr, 0, 0, 0, 0.5);
+        cairo_rectangle(cr, ox, oy, width_, height_);
+        cairo_fill(cr);
+
+        cairo_save(cr);
+        cairo_rectangle(cr, ox, oy, width_, height_);
+        cairo_clip(cr);
+
+        // Tape divider line
+        double div_x = labels_right ? ox + width_ * 0.45 : ox + width_ * 0.55;
+        cairo_set_source_rgba(cr, 1, 1, 1, 0.3);
+        cairo_set_line_width(cr, 1.0);
+        cairo_move_to(cr, div_x, oy);
+        cairo_line_to(cr, div_x, oy + height_);
+        cairo_stroke(cr);
+
+        // Tick marks and labels
+        double first_t = floor((value_ - range_ * 1.1) / tick_interval_) * tick_interval_;
+        double last_t  = ceil ((value_ + range_ * 1.1) / tick_interval_) * tick_interval_;
+        for (double t = first_t; t <= last_t; t += tick_interval_) {
+            double yp = cy - (t - value_) * ppu;
+            if (yp < oy - 5 || yp > oy + height_ + 5) continue;
+            if (std::fabs(yp - cy) < 14) continue; // skip inside value box
+
+            // Tick (from divider toward tape side)
+            double tick_end = labels_right ? div_x - width_ * 0.15 : div_x + width_ * 0.15;
+            cairo_set_source_rgba(cr, 1, 1, 1, 0.65);
+            cairo_set_line_width(cr, 1.5);
+            cairo_move_to(cr, div_x, yp);
+            cairo_line_to(cr, tick_end, yp);
+            cairo_stroke(cr);
+
+            // Label
+            char lbl[16];
+            snprintf(lbl, sizeof(lbl), format_.c_str(), t);
+            cairo_select_font_face(cr, "Roboto", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+            cairo_set_font_size(cr, 11.0);
+            cairo_text_extents_t ext;
+            cairo_text_extents(cr, lbl, &ext);
+            cairo_set_source_rgba(cr, 1, 1, 1, 0.85);
+            double lx = labels_right
+                ? div_x + width_ * 0.08 - ext.x_bearing
+                : div_x - width_ * 0.08 - ext.width - ext.x_bearing;
+            cairo_move_to(cr, lx, yp + ext.height * 0.35);
+            cairo_show_text(cr, lbl);
+        }
+
+        // Current value box (full width, opaque)
+        double box_h = 24.0;
+        cairo_set_source_rgba(cr, 0.05, 0.05, 0.05, 0.95);
+        cairo_rectangle(cr, ox + 1, cy - box_h / 2, width_ - 2, box_h);
+        cairo_fill(cr);
+        cairo_set_source_rgba(cr, 1, 1, 1, 0.8);
+        cairo_set_line_width(cr, 1.5);
+        cairo_rectangle(cr, ox + 1, cy - box_h / 2, width_ - 2, box_h);
+        cairo_stroke(cr);
+
+        char vbuf[16];
+        snprintf(vbuf, sizeof(vbuf), format_.c_str(), value_);
+        cairo_select_font_face(cr, "Roboto", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+        cairo_set_font_size(cr, 13.0);
+        cairo_text_extents_t vext;
+        cairo_text_extents(cr, vbuf, &vext);
+        cairo_set_source_rgba(cr, 1.0, 1.0, 0.2, 1.0);
+        cairo_move_to(cr, ox + width_ / 2.0 - vext.width / 2.0 - vext.x_bearing,
+                          cy + vext.height * 0.35);
+        cairo_show_text(cr, vbuf);
+
+        // Unit label at top
+        if (!unit_.empty()) {
+            cairo_select_font_face(cr, "Roboto", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+            cairo_set_font_size(cr, 10.0);
+            cairo_text_extents_t uext;
+            cairo_text_extents(cr, unit_.c_str(), &uext);
+            cairo_set_source_rgba(cr, 1, 1, 1, 0.75);
+            cairo_move_to(cr, ox + width_ / 2.0 - uext.width / 2.0 - uext.x_bearing, oy + 12);
+            cairo_show_text(cr, unit_.c_str());
+        }
+
+        // Pointer triangle at center edge (pointing into tape)
+        double ps = 7.0;
+        cairo_set_source_rgba(cr, 1, 1, 1, 0.9);
+        if (labels_right) {
+            cairo_move_to(cr, ox, cy);
+            cairo_line_to(cr, ox + ps, cy - ps * 0.6);
+            cairo_line_to(cr, ox + ps, cy + ps * 0.6);
+        } else {
+            cairo_move_to(cr, ox + width_, cy);
+            cairo_line_to(cr, ox + width_ - ps, cy - ps * 0.6);
+            cairo_line_to(cr, ox + width_ - ps, cy + ps * 0.6);
+        }
+        cairo_close_path(cr);
+        cairo_fill(cr);
+
+        cairo_restore(cr);
+    }
+
+private:
+    int    width_, height_;
+    double range_, tick_interval_;
+    std::string unit_, label_side_, format_;
+    double value_     = 0.0;
+    bool   has_value_ = false;
 };
 
 class Osd {
@@ -2710,6 +3087,34 @@ private:
 			return {new PopupWidget(x, y, timeout_ms, (uint)matchers.size()), matchers};
 		} else if (type == "DebugWidget") {
 			return {new DebugWidget(x, y, (uint)matchers.size()), matchers};
+		} else if (type == "ArtificialHorizonWidget") {
+			int w  = widget_j.value("width",  400);
+			int h  = widget_j.value("height", 250);
+			double pr  = widget_j.value("pitch_range",    30.0);
+			int    li  = widget_j.value("ladder_interval", 10);
+			double ct  = widget_j.value("camera_tilt",     0.0);
+			bool   sra = widget_j.value("show_roll_arc",  true);
+			double sr = 0.1, sg = 0.3, sb = 0.6;
+			if (widget_j.contains("sky_color")) {
+				auto sc = widget_j.at("sky_color");
+				sr = sc.value("r", 0.1); sg = sc.value("g", 0.3); sb = sc.value("b", 0.6);
+			}
+			double gr = 0.35, gg = 0.20, gb = 0.05;
+			if (widget_j.contains("ground_color")) {
+				auto gc = widget_j.at("ground_color");
+				gr = gc.value("r", 0.35); gg = gc.value("g", 0.20); gb = gc.value("b", 0.05);
+			}
+			return {new ArtificialHorizonWidget(x, y, w, h, sr, sg, sb, gr, gg, gb,
+			                                    pr, li, ct, sra), matchers};
+		} else if (type == "VerticalTapeWidget") {
+			int w  = widget_j.value("width",  80);
+			int h  = widget_j.value("height", 250);
+			double range = widget_j.value("range",         30.0);
+			double tint  = widget_j.value("tick_interval",  5.0);
+			std::string unit  = widget_j.value("unit",        "");
+			std::string lside = widget_j.value("label_side", "right");
+			std::string fmt   = widget_j.value("format",    "%.0f");
+			return {new VerticalTapeWidget(x, y, w, h, range, tint, unit, lside, fmt), matchers};
 		} else if (type == "HeadingTapeWidget") {
 			int w    = widget_j.contains("width")            ? widget_j.at("width").get<int>()            : 400;
 			int h    = widget_j.contains("height")           ? widget_j.at("height").get<int>()           : 50;

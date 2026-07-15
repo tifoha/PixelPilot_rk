@@ -67,8 +67,8 @@
     {
       "name": "Compass",
       "type": "CompassWidget",
-      "x": -200,
-      "y": -200,
+      "x": -185,
+      "y": -185,
       "radius": 90,
       "mode": "north_up",
       "icon": "drone",
@@ -82,7 +82,8 @@
         { "name": "mavlink.vfr_hud.heading" },
         { "name": "mavlink.home.bearing_relative" },
         { "name": "mavlink.wind.direction" },
-        { "name": "mavlink.wind.speed" }
+        { "name": "mavlink.wind.speed" },
+        { "name": "mavlink.home.distance" }
       ]
     },
     {
@@ -116,9 +117,60 @@
           "home_color": { "r": 0.0, "g": 0.85, "b": 0.2 },
           "facts": [
             { "name": "mavlink.vfr_hud.heading" },
-            { "name": "mavlink.home.bearing_relative" }
+            { "name": "mavlink.home.bearing_relative" },
+            { "name": "mavlink.home.distance" }
           ]
         }
+      ]
+    },
+    {
+      "name": "ArtificialHorizon",
+      "type": "ArtificialHorizonWidget",
+      "x": 760,
+      "y": 120,
+      "width": 400,
+      "height": 250,
+      "camera_tilt": 0,
+      "pitch_range": 30,
+      "ladder_interval": 10,
+      "show_roll_arc": true,
+      "sky_color":    { "r": 0.10, "g": 0.28, "b": 0.58 },
+      "ground_color": { "r": 0.32, "g": 0.18, "b": 0.04 },
+      "facts": [
+        { "name": "mavlink.attitude.roll" },
+        { "name": "mavlink.attitude.pitch" }
+      ]
+    },
+    {
+      "name": "SpeedTape",
+      "type": "VerticalTapeWidget",
+      "x": 680,
+      "y": 120,
+      "width": 80,
+      "height": 250,
+      "range": 15,
+      "tick_interval": 5,
+      "unit": "m/s",
+      "label_side": "right",
+      "format": "%.0f",
+      "facts": [
+        { "name": "mavlink.vfr_hud.airspeed" }
+      ]
+    },
+    {
+      "name": "AltitudeTape",
+      "type": "VerticalTapeWidget",
+      "x": 1160,
+      "y": 120,
+      "width": 80,
+      "height": 250,
+      "range": 15,
+      "tick_interval": 5,
+      "unit": "m",
+      "label_side": "left",
+      "format": "%.0f",
+      "facts": [
+        { "name": "mavlink.vfr_hud.alt" }
       ]
     },
     {

@@ -937,16 +937,18 @@ public:
 		cairo_surface_t *target = cairo_get_target(cr);
 		int w = cairo_image_surface_get_width(target);
 		int h = cairo_image_surface_get_height(target);
-		int rx = center_x_ ? (w - own_width_) / 2 : (w + pos_x) % w;
-		return std::pair(rx, (h + pos_y) % h);
+		int rx = center_x_ ? (w - own_width_)  / 2 : (w + pos_x) % w;
+		int ry = center_y_ ? (h - own_height_) / 2 : (h + pos_y) % h;
+		return std::pair(rx, ry);
 	}
 
-	void set_center_x(int widget_width) { center_x_ = true; own_width_ = widget_width; }
+	void set_center_x(int widget_width)  { center_x_ = true; own_width_  = widget_width; }
+	void set_center_y(int widget_height) { center_y_ = true; own_height_ = widget_height; }
 
 protected:
 	int pos_x, pos_y;
-	bool center_x_ = false;
-	int own_width_ = 0;
+	bool center_x_ = false; int own_width_  = 0;
+	bool center_y_ = false; int own_height_ = 0;
 	std::vector<Fact> args;
 };
 
@@ -2691,11 +2693,11 @@ public:
     VerticalTapeWidget(int pos_x, int pos_y, int width, int height,
                        double range, double tick_interval,
                        const std::string& unit, const std::string& label_side,
-                       const std::string& format)
+                       const std::string& format, double bg_alpha)
         : Widget(pos_x, pos_y, 0),
           width_(width), height_(height), range_(range),
           tick_interval_(tick_interval), unit_(unit),
-          label_side_(label_side), format_(format) {}
+          label_side_(label_side), format_(format), bg_alpha_(bg_alpha) {}
 
     void setFact(uint idx, Fact fact) override {
         if (idx != 0) { spdlog::error("VerticalTapeWidget: unexpected idx {}", idx); return; }
@@ -2714,7 +2716,7 @@ public:
         bool labels_right = (label_side_ != "left");
 
         // Background
-        cairo_set_source_rgba(cr, 0, 0, 0, 0.5);
+        cairo_set_source_rgba(cr, 0, 0, 0, bg_alpha_);
         cairo_rectangle(cr, ox, oy, width_, height_);
         cairo_fill(cr);
 
@@ -2815,6 +2817,7 @@ private:
     int    width_, height_;
     double range_, tick_interval_;
     std::string unit_, label_side_, format_;
+    double bg_alpha_  = 0.5;
     double value_     = 0.0;
     bool   has_value_ = false;
 };
@@ -3108,8 +3111,11 @@ private:
 				gr = gc.value("r", 0.35); gg = gc.value("g", 0.20); gb = gc.value("b", 0.05);
 			}
 			double ah_alpha = widget_j.value("bg_alpha", 0.65);
-			return {new ArtificialHorizonWidget(x, y, w, h, sr, sg, sb, gr, gg, gb,
-			                                    pr, li, ct, sra, ah_alpha), matchers};
+			auto* ah = new ArtificialHorizonWidget(x, y, w, h, sr, sg, sb, gr, gg, gb,
+			                                       pr, li, ct, sra, ah_alpha);
+			if (widget_j.value("center_x", false)) ah->set_center_x(w);
+			if (widget_j.value("center_y", false)) ah->set_center_y(h);
+			return {ah, matchers};
 		} else if (type == "VerticalTapeWidget") {
 			int w  = widget_j.value("width",  80);
 			int h  = widget_j.value("height", 250);
@@ -3118,7 +3124,8 @@ private:
 			std::string unit  = widget_j.value("unit",        "");
 			std::string lside = widget_j.value("label_side", "right");
 			std::string fmt   = widget_j.value("format",    "%.0f");
-			return {new VerticalTapeWidget(x, y, w, h, range, tint, unit, lside, fmt), matchers};
+			double bg_alpha   = widget_j.value("bg_alpha",   0.5);
+			return {new VerticalTapeWidget(x, y, w, h, range, tint, unit, lside, fmt, bg_alpha), matchers};
 		} else if (type == "HeadingTapeWidget") {
 			int w    = widget_j.contains("width")            ? widget_j.at("width").get<int>()            : 400;
 			int h    = widget_j.contains("height")           ? widget_j.at("height").get<int>()           : 50;

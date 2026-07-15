@@ -126,15 +126,17 @@
     {
       "name": "ArtificialHorizon",
       "type": "ArtificialHorizonWidget",
-      "x": 760,
-      "y": 120,
-      "width": 400,
-      "height": 250,
+      "x": 0,
+      "center_x": true,
+      "y": 0,
+      "center_y": true,
+      "width": 800,
+      "height": 500,
       "camera_tilt": 0,
       "pitch_range": 30,
       "ladder_interval": 10,
       "show_roll_arc": true,
-      "bg_alpha": 0.1,
+      "bg_alpha": 0,
       "sky_color":    { "r": 0.10, "g": 0.28, "b": 0.58 },
       "ground_color": { "r": 0.32, "g": 0.18, "b": 0.04 },
       "facts": [
@@ -145,15 +147,16 @@
     {
       "name": "SpeedTape",
       "type": "VerticalTapeWidget",
-      "x": 300,
-      "y": 120,
+      "x": 800,
+      "y": 470,
       "width": 80,
-      "height": 250,
+      "height": 500,
       "range": 15,
       "tick_interval": 5,
       "unit": "m/s",
       "label_side": "right",
       "format": "%.0f",
+      "bg_alpha": 0,
       "facts": [
         { "name": "mavlink.vfr_hud.airspeed" }
       ]
@@ -161,15 +164,16 @@
     {
       "name": "AltitudeTape",
       "type": "VerticalTapeWidget",
-      "x": 1160,
-      "y": 120,
+      "x": 1680,
+      "y": 470,
       "width": 80,
-      "height": 250,
+      "height": 500,
       "range": 15,
       "tick_interval": 5,
       "unit": "m",
       "label_side": "left",
       "format": "%.0f",
+      "bg_alpha": 0,
       "facts": [
         { "name": "mavlink.vfr_hud.alt" }
       ]
@@ -180,12 +184,12 @@
       "x": 700,
       "y": 600,
       "facts": [
-        { "name": "mavlink.vfr_hud.heading" },
-        { "name": "mavlink.home.bearing_relative" },
-        { "name": "mavlink.wind.direction" },
-        { "name": "mavlink.wind.speed" },
-        { "name": "mavlink.vfr_hud.alt" },
-        { "name": "mavlink.vfr_hud.airspeed" }
+//        { "name": "mavlink.vfr_hud.heading" },
+//        { "name": "mavlink.home.bearing_relative" },
+//        { "name": "mavlink.wind.direction" },
+//        { "name": "mavlink.wind.speed" },
+//        { "name": "mavlink.vfr_hud.alt" },
+//        { "name": "mavlink.vfr_hud.airspeed" }
 //        { "name": "mavlink.heartbeet.base_mode.armed" },
 //        { "name": "mavlink.vfr_hud.throttle" },
 //        { "name": "mavlink.attitude.roll",  "convert": "deg(x)" },

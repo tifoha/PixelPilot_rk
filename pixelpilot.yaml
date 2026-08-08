@@ -1,3 +1,143 @@
+# ─── Video Input ──────────────────────────────────────────────────────────────
+
+# UDP port to receive RTP video. Default: 5600.
+# Ignored when `streams:` is defined (multistream mode).
+# port: 5600
+
+# Video codec for single-stream mode: h264 or h265. Default: h265.
+# codec: h265
+
+# Multistream switcher: list of streams to receive simultaneously.
+# When set, `port` and `codec` above are ignored. Switch between streams
+# with the GPIO left/right buttons or the SWITCH_STREAM FIFO command.
+streams:
+  - port: 5600
+    codec: h264
+  - port: 5601
+    codec: h264
+#   # Unix abstract socket instead of UDP port:
+#   # - socket: myvideo
+#   #   codec: h265
+
+# ─── Display ──────────────────────────────────────────────────────────────────
+
+# Force a specific display mode: "WxH@R" e.g. "1920x1080@60".
+# Omit to use the connected display's preferred mode.
+screen_mode: 1920x1080@60
+
+# Disable vertical sync (may reduce end-to-end latency at cost of tearing).
+# Default: false.
+# disable_vsync: false
+
+# Scale video to fill less of the screen. Range 0.5–1.0; 1.0 = full screen.
+# Default: 1.0.
+# video_scale: 1.0
+
+# DRM hardware plane IDs for video and OSD layers.
+# Leave unset to let pixelpilot auto-detect the correct planes.
+# video_plane_id: 0
+# osd_plane_id: 0
+
+# ─── OSD ──────────────────────────────────────────────────────────────────────
+
+osd:
+  # Enable the telemetry OSD overlay. Default: false.
+  enabled: true
+  # Path to OSD widget layout JSON.
+  config: /home/orangepi/PixelPilot_rk/config_osd.json
+  # How often OSD telemetry facts are refreshed, in ms. Default: 1000.
+  refresh_ms: 200
+
+# ─── DVR ──────────────────────────────────────────────────────────────────────
+
+dvr:
+#   # Output file path template (strftime format). Enables DVR when set.
+#   template: /media/DVR/%Y-%m-%d_%H-%M-%S.mp4
+#   # Start recording immediately on launch. Default: false.
+   autostart: false
+#   # Frame rate for raw-stream DVR. Required when mode is raw or both.
+#   framerate: 60
+#   # Recording mode:
+#   #   raw      – copy incoming RTP bitstream directly (lowest CPU, requires framerate)
+#   #   reencode – GPU re-encode via display_reencode settings (no framerate needed)
+#   #   both     – write both files simultaneously
+#   # Default: raw.
+#   mode: raw
+#   # Burn the OSD overlay into the DVR recording. Default: false.
+#   osd: false
+#   # Maximum file size in MB before rolling over to a new file. Default: 4000.
+   max_size_mb: 4000
+#   # Use fragmented MP4 (crash-safe; recording is playable even if power is cut).
+#   # Default: true.
+   fmp4: true
+#   # Append an incrementing sequence number to each file name. Default: false.
+#   sequenced_files: false
+
+# ─── Display Re-encode ────────────────────────────────────────────────────────
+
+# Hardware re-encode of the display output via Rockchip MPP.
+# Used for DVR mode reencode/both, and for display restream.
+display_reencode:
+  codec: h264         # h264 or h265
+  bitrate_kbps: 4000
+  # fps and resolution default to the negotiated HDMI mode; override here if needed:
+  # fps: 30
+  # resolution: 1080p   # 720p or 1080p
+  osd: true          # burn OSD into the re-encoded output
+
+# ─── MAVLink ──────────────────────────────────────────────────────────────────
+
+mavlink:
+  # UDP port to receive MAVLink telemetry from the drone. Default: 14550.
+  port: 14551
+  # Automatically start DVR recording when the drone arms and stop on disarm.
+  # Default: false.
+  dvr_on_arm: true
+
+# ─── WFB-ng Link Statistics ───────────────────────────────────────────────────
+
+wfb:
+#   # UDP port of the wfb-ng link statistics API. Default: 8003.
+   api_port: 8003
+#   # Host of the wfb-ng link statistics API. Default: 127.0.0.1.
+   api_host: 10.13.0.2
+
+# ─── Control FIFO ─────────────────────────────────────────────────────────────
+
+# Path of the named pipe used to send commands (DVR_START, DVR_STOP, SWITCH_STREAM N)
+# to a running pixelpilot instance. The directory must be writable by the service user.
+# Default: /run/pixelpilot/pixelpilot.msg  (created by systemd RuntimeDirectory=pixelpilot)
+# fifo_path: /run/pixelpilot/pixelpilot.msg
+
+# ─── Logging ──────────────────────────────────────────────────────────────────
+
+log:
+#   # Log verbosity: debug, info, warn, error. Default: info.
+  level: info
+#   # Also write logs to a file (path is optional; omit for the default path
+#   # /var/log/pixelpilot/pixelpilot.log).
+  file: /home/orangepi/logs/pixelpilot/pixelpilot.log
+#   # Maximum log file size in MB before rotating. Default: 10.
+  max_size_mb: 10
+#   # Number of rotated log files to retain. Default: 3.
+  max_files: 3
+
+# ─── Restream ─────────────────────────────────────────────────────────────────
+
+# DEPRECATED: manual_ip — use restream.targets instead.
+# Kept for backward compatibility; will be removed in a future release.
+restream:
+  # manual_ip: 192.168.13.110
+  # Enable restreaming to a fixed IP (also activates the restream feature).
+  # ip: 192.168.13.110
+  # Per-stream restream targets (multistream mode):
+  targets:
+    - index: -1
+      ip: 10.42.0.110
+      port: 5600
+
+# ─── GSMenu ───────────────────────────────────────────────────────────────────
+
 gsmenu:
   enabled: true
   # Menu background opacity, 0 (fully see-through video) - 255 (opaque). Default 255.
@@ -36,6 +176,9 @@ gsmenu:
   #   ground:
   #     - label: Custom Action 1
   #       action: sleep 5
+
+# ─── OS Sensors ───────────────────────────────────────────────────────────────
+
 # enables collection of `os_mon.*` OSD facts
 os_sensors:
   cpu: true      # Monitor CPU load percentage
@@ -54,9 +197,3 @@ os_sensors:
 #   cpu: auto
 #   power: auto
 #   temperature: auto
-
-# Phone restream target IP (optional)
-# manual_ip: permanently pins this IP in the "Stream To" dropdown so it is
-#   always visible as an option, even when auto-discovery finds no clients.
-restream:
-  manual_ip: 192.168.13.110

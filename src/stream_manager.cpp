@@ -39,19 +39,21 @@ void StreamManager::add_stream(int udp_port, const std::string& unix_socket, Vid
         uint32_t fw = sp_->frame_width(), fh = sp_->frame_height();
         if (fw != 0 && fh != 0 &&
             (fw != (uint32_t)output_list_->video_frm_width || fh != (uint32_t)output_list_->video_frm_height)) {
-            // Same call, same thread-ownership pattern as today's single-
-            // stream init_buffer(): a real, synchronous DRM modeset commit
-            // from the decode thread, strictly before the video_cond
-            // signal below -- so __DISPLAY_THREAD__ never touches
-            // output_list->video_request concurrently with this.
+            // Use a private atomic request — NOT output_list_->video_request.
+            // That pointer is owned by __DISPLAY_THREAD__ which calls
+            // drmModeAtomicFree/Alloc between frames; borrowing it here from a
+            // decode thread races with those free/alloc calls and can hand
+            // drmModeAtomicAddProperty a freed pointer → SIGSEGV.
             output_list_->video_frm_width = fw;
             output_list_->video_frm_height = fh;
             output_list_->video_fb_x = 0;
             output_list_->video_fb_y = 0;
             output_list_->video_fb_width = output_list_->mode.hdisplay;
             output_list_->video_fb_height = output_list_->mode.vdisplay;
-            int ret = modeset_perform_modeset(drm_fd_, output_list_, output_list_->video_request,
+            drmModeAtomicReq *req = drmModeAtomicAlloc();
+            int ret = modeset_perform_modeset(drm_fd_, output_list_, req,
                                                &output_list_->video_plane, fb_id, fw, fh, video_zpos_);
+            drmModeAtomicFree(req);
             if (ret < 0) {
                 spdlog::error("[switcher] modeset_perform_modeset failed switching to stream {} ({}x{})", idx, fw, fh);
             }

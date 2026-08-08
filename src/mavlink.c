@@ -171,6 +171,13 @@ void* __MAVLINK_THREAD__(void* arg) {
                     }
                   }
               }
+              void *hb_batch = osd_batch_init(5);
+              osd_add_uint_fact(hb_batch, "mavlink.heartbeat.type",          tags, 2, (ulong)heartbeat.type);
+              osd_add_uint_fact(hb_batch, "mavlink.heartbeat.autopilot",     tags, 2, (ulong)heartbeat.autopilot);
+              osd_add_uint_fact(hb_batch, "mavlink.heartbeat.base_mode",     tags, 2, (ulong)heartbeat.base_mode);
+              osd_add_uint_fact(hb_batch, "mavlink.heartbeat.custom_mode",   tags, 2, (ulong)heartbeat.custom_mode);
+              osd_add_uint_fact(hb_batch, "mavlink.heartbeat.system_status", tags, 2, (ulong)heartbeat.system_status);
+              osd_publish_batch(hb_batch);
             }
             break;
 	      case MAVLINK_MSG_ID_RAW_IMU:
@@ -333,6 +340,17 @@ void* __MAVLINK_THREAD__(void* arg) {
                 if ((message.sysid != 3) || (message.compid != 68)) {
                     break;
                 }
+            }
+            break;
+
+          case MAVLINK_MSG_ID_STATUSTEXT:
+            {
+              mavlink_statustext_t st;
+              mavlink_msg_statustext_decode(&message, &st);
+              char text[51];
+              memcpy(text, st.text, 50);
+              text[50] = '\0';
+              osd_publish_str_fact("osd.custom_message", tags, 2, text);
             }
             break;
 

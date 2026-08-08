@@ -80,7 +80,8 @@ extern "C" {
 #define DEFAULT_CONFIG_PATH "/etc/pixelpilot.yaml"
 YAML::Node config;
 
-#define MSG_FIFO_NAME "/run/pixelpilot.msg"
+#define MSG_FIFO_NAME "/run/pixelpilot/pixelpilot.msg"
+std::string g_fifo_path = MSG_FIFO_NAME;
 
 struct {
 	MppCtx		  ctx;
@@ -120,7 +121,6 @@ extern "C" void dvr_start_all(void);
 extern "C" void dvr_stop_all(void);
 
 bool mavlink_dvr_on_arm = false;  // set when --dvr-on-mavlink-arm is used
-bool osd_custom_message = false;
 
 // Per-stream DVR config (multistream mode). Key: stream index (0,1,...) or -1 for display.
 struct StreamDvrCfg {
@@ -938,12 +938,9 @@ void resume_playback() {
 
 class CustomMsgManager {
 public:
-    CustomMsgManager(const char* fifoName, bool enabled) : fifoName(fifoName), fd(-1), enabled(enabled) {}
+    CustomMsgManager(const char* fifoName) : fifoName(fifoName), fd(-1) {}
 
     int open_fifo() {
-        if (!enabled) {
-            return 0;
-        }
         // Kill FIFO if already exists
         if (access(fifoName, F_OK) == 0) {
             unlink(fifoName);
@@ -971,11 +968,8 @@ public:
     }
 
     void check_message() {
-        if (!enabled) {
+        if (fd == -1) {
             return;
-        } else if (fd == -1) {
-            spdlog::error("FIFO is not initialized.");
-            return; // Avoid reading if FIFO is not initialized
         }
 
         // fd is non-blocking
@@ -1023,10 +1017,42 @@ public:
     }
 
     void publish_message(const std::string& raw) {
+        std::string msg = unescape_newlines(raw);
+
+        // Command dispatch — lines starting with a known keyword are not shown
+        // as OSD messages; they trigger internal actions instead.
+        if (msg == "DVR_START") {
+            spdlog::info("FIFO: DVR_START");
+            dvr_start_all();
+            return;
+        }
+        if (msg == "DVR_STOP") {
+            spdlog::info("FIFO: DVR_STOP");
+            dvr_stop_all();
+            return;
+        }
+        if (msg.rfind("SWITCH_STREAM", 0) == 0) {
+            if (g_stream_manager) {
+                if (msg.size() > 14 && msg[13] == ':') {
+                    // SWITCH_STREAM:<index>
+                    try {
+                        int idx = std::stoi(msg.substr(14));
+                        spdlog::info("FIFO: SWITCH_STREAM to {}", idx);
+                        g_stream_manager->switch_to(idx);
+                    } catch (...) {
+                        spdlog::warn("FIFO: SWITCH_STREAM bad index: {}", msg.substr(14));
+                    }
+                } else {
+                    spdlog::info("FIFO: SWITCH_STREAM next");
+                    g_stream_manager->switch_to_next();
+                }
+            }
+            return;
+        }
+
         osd_tag tags[1];
         strcpy(tags[0].key, "file");
         strcpy(tags[0].val, fifoName);
-        std::string msg = unescape_newlines(raw);
         osd_publish_str_fact("osd.custom_message", tags, 1, msg.c_str());
     }
 
@@ -1042,16 +1068,13 @@ private:
 
     const char* fifoName;
     int fd; // File descriptor for the FIFO
-    bool enabled;
     std::string buffer; // accumulates partial reads until a `\n` is seen
 };
 
 void main_loop() {
-    CustomMsgManager msg_manager(MSG_FIFO_NAME, osd_custom_message);
+    CustomMsgManager msg_manager(g_fifo_path.c_str());
 
-    if (msg_manager.open_fifo() != 0) {
-        return;
-    }
+    msg_manager.open_fifo();
 
     while (!signal_flag) {
         // TODO: put gsmenu main loop here
@@ -1334,9 +1357,192 @@ int main(int argc, char **argv)
 	std::vector<RestreamSpec> restream_specs;
 
 	std::string restream_ip_arg;
+	bool reenc_resolution_explicit = false; // true when user set display_reencode.resolution
+	bool reenc_fps_explicit        = false; // true when user set display_reencode.fps
+
+	// Collection-tracking flags: set when CLI provides --stream / --restream so
+	// YAML-defined collections are skipped (CLI takes full priority for arrays).
+	bool cli_streams_given  = false;
+	bool cli_restream_given = false;
+
+	// Pre-scan argv for --config so YAML is loaded before the full parse loop,
+	// letting CLI flags naturally override whatever YAML set.
+	for (int i = 1; i < argc - 1; ++i) {
+		if (strcmp(argv[i], "--config") == 0) { config_file_path = argv[i + 1]; break; }
+	}
+	if (config_file_path == NULL) {
+		const char *env_cfg = getenv("PP_CONFIG");
+		config_file_path = (env_cfg && env_cfg[0]) ? strdup(env_cfg) : strdup(DEFAULT_CONFIG_PATH);
+	}
+
+	bool yaml_loaded = false;
+	try {
+		config = YAML::LoadFile(config_file_path);
+		yaml_loaded = true;
+	} catch (const YAML::BadFile&) {
+		// Config file absent — silently proceed with defaults / CLI args only
+	} catch (const YAML::Exception& e) {
+		fprintf(stderr, "Warning: could not parse config %s: %s\n", config_file_path, e.what());
+	}
+
+	try { if (yaml_loaded) {
+		if (config["port"])  listen_port = (uint16_t)config["port"].as<int>();
+		if (config["codec"]) {
+			VideoCodec c = video_codec(config["codec"].as<std::string>().c_str());
+			if (c != VideoCodec::UNKNOWN) codec = c;
+		}
+		if (config["screen_mode"]) {
+			std::string sm = config["screen_mode"].as<std::string>();
+			std::vector<char> smbuf(sm.begin(), sm.end()); smbuf.push_back('\0');
+			char *p = smbuf.data();
+			char *sw = strtok(p, "x"), *sh = strtok(NULL, "@"), *sr = strtok(NULL, "@");
+			if (sw && sh && sr) {
+				mode_width    = (uint16_t)atoi(sw);
+				mode_height   = (uint16_t)atoi(sh);
+				mode_vrefresh = (uint32_t)atoi(sr);
+			}
+		}
+		if (config["disable_vsync"])  disable_vsync           = config["disable_vsync"].as<bool>();
+		if (config["video_scale"])    video_scale_factor      = config["video_scale"].as<float>();
+		if (config["video_plane_id"]) video_plane_id_override = (uint32_t)config["video_plane_id"].as<int>();
+		if (config["osd_plane_id"])   osd_plane_id_override   = (uint32_t)config["osd_plane_id"].as<int>();
+
+		if (config["osd"] && config["osd"].IsMap()) {
+			const auto& oc = config["osd"];
+			if (oc["enabled"] && oc["enabled"].as<bool>()) { enable_osd = 1; mavlink_thread = 1; }
+			if (oc["config"])         osd_config_path      = oc["config"].as<std::string>();
+			if (oc["refresh_ms"])     refresh_frequency_ms = (uint32_t)oc["refresh_ms"].as<int>();
+		}
+
+		if (config["dvr"] && config["dvr"].IsMap()) {
+			const auto& dc = config["dvr"];
+			if (dc["template"])        dvr_template              = strdup(dc["template"].as<std::string>().c_str());
+			if (dc["autostart"] && dc["autostart"].as<bool>()) { dvr_autostart = 1; dvr_autostart_all = true; }
+			if (dc["framerate"])       video_framerate           = dc["framerate"].as<int>();
+			if (dc["mode"]) {
+				std::string m = dc["mode"].as<std::string>();
+				if      (m == "raw")      dvr_mode = DVR_MODE_RAW;
+				else if (m == "reencode") dvr_mode = DVR_MODE_REENCODE;
+				else if (m == "both")     dvr_mode = DVR_MODE_BOTH;
+			}
+			if (dc["osd"])             dvr_osd                     = dc["osd"].as<bool>();
+			if (dc["max_size_mb"])     dvr_max_file_size           = (int64_t)dc["max_size_mb"].as<int>() * 1000000LL;
+			if (dc["fmp4"])            mp4_fragmentation_mode      = dc["fmp4"].as<bool>() ? 1 : 0;
+			if (dc["sequenced_files"]) dvr_filenames_with_sequence = dc["sequenced_files"].as<bool>();
+		}
+
+		if (config["display_reencode"] && config["display_reencode"].IsMap()) {
+			const auto& dr = config["display_reencode"];
+			if (dr["codec"]) {
+				VideoCodec c = video_codec(dr["codec"].as<std::string>().c_str());
+				if (c != VideoCodec::UNKNOWN) reenc_params.codec = c;
+			}
+			if (dr["bitrate_kbps"]) reenc_params.bitrate_kbps = dr["bitrate_kbps"].as<int>();
+			if (dr["fps"])        { reenc_params.fps = dr["fps"].as<int>(); reenc_fps_explicit = true; }
+			if (dr["resolution"]) {
+				std::string r = dr["resolution"].as<std::string>();
+				if      (r == "720p")  reenc_params.resolution = EncResolution::Res720p;
+				else if (r == "1080p") reenc_params.resolution = EncResolution::Res1080p;
+				reenc_resolution_explicit = true;
+			}
+			if (dr["osd"]) display_reencode_osd = dr["osd"].as<bool>();
+		}
+
+		if (config["restream"] && config["restream"].IsMap()) {
+			const auto& rc = config["restream"];
+			if (rc["manual_ip"]) restream_set_pinned_ip(rc["manual_ip"].as<std::string>().c_str());
+			if (rc["ip"])        restream_ip_arg = rc["ip"].as<std::string>();
+		}
+
+		if (config["mavlink"] && config["mavlink"].IsMap()) {
+			const auto& mv = config["mavlink"];
+			if (mv["port"])       mavlink_port       = mv["port"].as<int>();
+			if (mv["dvr_on_arm"]) mavlink_dvr_on_arm = mv["dvr_on_arm"].as<bool>();
+		}
+
+		if (config["wfb"] && config["wfb"].IsMap()) {
+			const auto& wc = config["wfb"];
+			if (wc["api_port"]) wfb_port     = (uint16_t)wc["api_port"].as<int>();
+			if (wc["api_host"]) wfb_api_host = strdup(wc["api_host"].as<std::string>().c_str());
+		}
+
+		if (config["fifo_path"]) g_fifo_path = config["fifo_path"].as<std::string>();
+
+		if (config["log"] && config["log"].IsMap()) {
+			const auto& lc = config["log"];
+			if (lc["level"]) {
+				std::string lv = lc["level"].as<std::string>();
+				if      (lv == "debug") log_level = spdlog::level::debug;
+				else if (lv == "info")  log_level = spdlog::level::info;
+				else if (lv == "warn")  log_level = spdlog::level::warn;
+				else if (lv == "error") log_level = spdlog::level::err;
+			}
+			if (lc["file"])        log_file        = lc["file"].as<std::string>();
+			if (lc["max_size_mb"]) log_max_size_mb = lc["max_size_mb"].as<int>();
+			if (lc["max_files"])   log_max_files   = lc["max_files"].as<int>();
+		}
+
+		if (config["gsmenu"] && config["gsmenu"].IsMap()) {
+			const auto& gm = config["gsmenu"];
+			if (gm["enabled"])          gsmenu_enabled          = gm["enabled"].as<bool>();
+			if (gm["transparency"])     gsmenu_transparency     = 255 - gm["transparency"].as<int>();
+			if (gm["error_timeout_ms"]) gsmenu_error_timeout_ms = gm["error_timeout_ms"].as<int>();
+			if (gsmenu_enabled && gm["actions"]) {
+				if (gm["actions"]["air"]) {
+					const YAML::Node& an = gm["actions"]["air"];
+					airactions_count = 0;
+					for (YAML::const_iterator it = an.begin(); it != an.end() && airactions_count < MAX_ACTIONS; ++it) {
+						std::string label = (*it)["label"].as<std::string>(), cmd = (*it)["action"].as<std::string>();
+						strncpy(airactions[airactions_count].label,  label.c_str(), MAX_LABEL_LEN  - 1);
+						strncpy(airactions[airactions_count].action, cmd.c_str(),   MAX_ACTION_LEN - 1);
+						airactions[airactions_count].label[MAX_LABEL_LEN   - 1] = '\0';
+						airactions[airactions_count].action[MAX_ACTION_LEN - 1] = '\0';
+						airactions_count++;
+					}
+					spdlog::debug("Parsed {} air GS Actions", airactions_count);
+				}
+				if (gm["actions"]["ground"]) {
+					const YAML::Node& an = gm["actions"]["ground"];
+					gsactions_count = 0;
+					for (YAML::const_iterator it = an.begin(); it != an.end() && gsactions_count < MAX_ACTIONS; ++it) {
+						std::string label = (*it)["label"].as<std::string>(), cmd = (*it)["action"].as<std::string>();
+						strncpy(gsactions[gsactions_count].label,  label.c_str(), MAX_LABEL_LEN  - 1);
+						strncpy(gsactions[gsactions_count].action, cmd.c_str(),   MAX_ACTION_LEN - 1);
+						gsactions[gsactions_count].label[MAX_LABEL_LEN   - 1] = '\0';
+						gsactions[gsactions_count].action[MAX_ACTION_LEN - 1] = '\0';
+						gsactions_count++;
+					}
+					spdlog::debug("Parsed {} ground GS Actions", gsactions_count);
+				}
+			}
+		}
+
+		if (config["os_sensors"] && config["os_sensors"].IsMap()) {
+			if (config["os_sensors"]["cpu"]) {
+				auto cpu = config["os_sensors"]["cpu"];
+				if (cpu.IsScalar() && cpu.as<std::string>() == "auto") os_sensors.discoverCPU();
+				else os_sensors.addCPU();
+			}
+			if (config["os_sensors"]["power"]) {
+				auto power = config["os_sensors"]["power"];
+				if (power.IsScalar() && power.as<std::string>() == "auto") os_sensors.discoverPower();
+				else for (const auto& p : power) os_sensors.addPower(p["type"].as<std::string>(), p["hwmon_id"].as<std::string>());
+			}
+			if (config["os_sensors"]["temperature"]) {
+				auto temp = config["os_sensors"]["temperature"];
+				if (temp.IsScalar() && temp.as<std::string>() == "auto") os_sensors.discoverTemperature();
+				else for (const auto& t : temp) os_sensors.addTemperature(t["thermal_zone"].as<std::string>());
+			}
+		} else {
+			spdlog::error("Unexpected format of config file 'os_sensors'!");
+		}
+	} } catch (const YAML::Exception& e) {
+		fprintf(stderr, "Warning: error reading config values from %s: %s\n", config_file_path, e.what());
+	}
+	os_sensors.addMemory();
 
 	// Load console arguments
-	__BeginParseConsoleArguments__(printHelp) 
+	__BeginParseConsoleArguments__(printHelp)
 
 	__OnArgument("-p") {
 		listen_port = atoi(__ArgValue);
@@ -1370,6 +1576,7 @@ int main(int argc, char **argv)
 	// further below) -- codec, if omitted, resolves against --codec's value
 	// (whatever it ends up being after the whole argv is parsed).
 	__OnArgument("--stream") {
+		cli_streams_given = true;
 		char buf[128];
 		const char *arg = __ArgValue;
 		if (strlen(arg) >= sizeof(buf)) {
@@ -1549,6 +1756,7 @@ int main(int argc, char **argv)
 
 	if (!strcmp(Arg, "--display-reencode-fps") || !strcmp(Arg, "--dvr-reenc-fps")) {
 		reenc_params.fps = atoi(__ArgValue);
+		reenc_fps_explicit = true;
 		continue;
 	}
 
@@ -1560,6 +1768,7 @@ int main(int argc, char **argv)
 			fprintf(stderr, "unsupported resolution (use 720p or 1080p)\n");
 			return -1;
 		}
+		reenc_resolution_explicit = true;
 		continue;
 	}
 
@@ -1649,7 +1858,7 @@ int main(int argc, char **argv)
 	}
 
 	__OnArgument("--osd-custom-message") {
-		osd_custom_message = true;
+		spdlog::warn("--osd-custom-message is removed; FIFO is always active.");
 		continue;
 	}
 
@@ -1723,6 +1932,7 @@ int main(int argc, char **argv)
 	// index: 0,1,... for raw RTP passthrough; "display" or "-1" for OSD re-encode
 	// port defaults: 5600+index for streams, 5609 for display
 	__OnArgument("--restream") {
+		cli_restream_given = true;
 		const char *arg = __ArgValue;
 		char buf[128];
 		if (strlen(arg) >= sizeof(buf)) {
@@ -1765,6 +1975,32 @@ int main(int argc, char **argv)
 	}
 
 	__EndParseConsoleArguments__
+
+	// Apply YAML stream/restream arrays if CLI didn't override them
+	if (!cli_streams_given && yaml_loaded && config["streams"] && config["streams"].IsSequence()) {
+		for (const auto& s : config["streams"]) {
+			StreamArg sa{0, std::string(), VideoCodec::UNKNOWN};
+			if (s["port"])   sa.port       = s["port"].as<int>();
+			if (s["socket"]) sa.unix_socket = s["socket"].as<std::string>();
+			if (s["codec"]) {
+				VideoCodec c = video_codec(s["codec"].as<std::string>().c_str());
+				if (c != VideoCodec::UNKNOWN) sa.stream_codec = c;
+			}
+			stream_args.push_back(sa);
+		}
+	}
+
+	if (!cli_restream_given && yaml_loaded && config["restream"] &&
+	    config["restream"]["targets"] && config["restream"]["targets"].IsSequence()) {
+		for (const auto& t : config["restream"]["targets"]) {
+			RestreamSpec spec;
+			spec.index = t["index"] ? t["index"].as<int>() : 0;
+			spec.ip    = t["ip"].as<std::string>();
+			spec.port  = t["port"]  ? t["port"].as<int>()  : 0;
+			if (spec.port == 0) spec.port = (spec.index >= 0) ? (5600 + spec.index) : 5609;
+			restream_specs.push_back(spec);
+		}
+	}
 
 	// Resolve any --stream entries that omitted :codec against --codec's
 	// final value (argv order shouldn't matter for this).
@@ -1821,142 +2057,12 @@ int main(int argc, char **argv)
 
 	printf("PixelPilot Rockchip %d.%d\n", APP_VERSION_MAJOR, APP_VERSION_MINOR);
 
-	// Load yaml config
-	try {
-
-		// Set default config path if none specified
-		if (config_file_path == NULL) {
-			config_file_path = strdup(DEFAULT_CONFIG_PATH);
-		}
-        config = YAML::LoadFile(config_file_path);
-
-		// GSMENU settings
-		if (config["gsmenu"]) {
-            if (config["gsmenu"]["enabled"]) {
-                gsmenu_enabled = config["gsmenu"]["enabled"].as<bool>();
-            }
-            if (config["gsmenu"]["transparency"]) {
-                // Inverted here, once, so every downstream consumer
-                // (style_init/apply_menu_transparency in gsmenu/styles.c)
-                // can just call lv_obj_set_style_bg_opa() normally.
-                // The OSD DRM plane's "pixel blend mode" is set to
-                // Coverage (drm.c, modeset_atomic_prepare_commit) since
-                // that's required for opacity to have any visible effect
-                // at all on this driver -- but doing so empirically
-                // inverts the visible result (0=opaque, 255=transparent)
-                // from LVGL's normal bg_opa convention. Confirmed by
-                // testing both extremes with and without that DRM
-                // property set. Compensating here keeps the YAML key's
-                // meaning ("transparency": low=see-through,
-                // high=opaque) matching user expectation end-to-end.
-                int yaml_value = config["gsmenu"]["transparency"].as<int>();
-                gsmenu_transparency = 255 - yaml_value;
-            }
-            if (config["gsmenu"]["error_timeout_ms"]) {
-                gsmenu_error_timeout_ms = config["gsmenu"]["error_timeout_ms"].as<int>();
-            }
-		if (gsmenu_enabled && config["gsmenu"]["actions"]) {
-			if (config["gsmenu"]["actions"]["air"]) {
-				const YAML::Node& actionsNode = config["gsmenu"]["actions"]["air"];
-				airactions_count = 0;
-				
-				for (YAML::const_iterator it = actionsNode.begin(); 
-					it != actionsNode.end() && airactions_count < MAX_ACTIONS; 
-					++it) {
-					
-					std::string label = (*it)["label"].as<std::string>();
-					std::string cmd = (*it)["action"].as<std::string>();
-					
-					// Access the global array at the current index
-					strncpy(airactions[airactions_count].label, label.c_str(), MAX_LABEL_LEN - 1);
-					airactions[airactions_count].label[MAX_LABEL_LEN - 1] = '\0';
-					
-					strncpy(airactions[airactions_count].action, cmd.c_str(), MAX_ACTION_LEN - 1);
-					airactions[airactions_count].action[MAX_ACTION_LEN - 1] = '\0';
-					
-					airactions_count++;
-				}
-				spdlog::debug("Parsed {} GS Actions", airactions_count);
-			}
-			if (config["gsmenu"]["actions"]["ground"]) {
-				const YAML::Node& actionsNode = config["gsmenu"]["actions"]["ground"];
-				gsactions_count = 0;
-				
-				for (YAML::const_iterator it = actionsNode.begin(); 
-					it != actionsNode.end() && gsactions_count < MAX_ACTIONS; 
-					++it) {
-					
-					std::string label = (*it)["label"].as<std::string>();
-					std::string cmd = (*it)["action"].as<std::string>();
-					
-					// Access the global array at the current index
-					strncpy(gsactions[gsactions_count].label, label.c_str(), MAX_LABEL_LEN - 1);
-					gsactions[gsactions_count].label[MAX_LABEL_LEN - 1] = '\0';
-					
-					strncpy(gsactions[gsactions_count].action, cmd.c_str(), MAX_ACTION_LEN - 1);
-					gsactions[gsactions_count].action[MAX_ACTION_LEN - 1] = '\0';
-					
-					gsactions_count++;
-				}
-				spdlog::debug("Parsed {} GS Actions", gsactions_count);
-			}
-		}
-		}
-
-		if (config["restream"] && config["restream"]["manual_ip"]) {
-			std::string ip = config["restream"]["manual_ip"].as<std::string>();
-			restream_set_pinned_ip(ip.c_str());
-		}
-
-		if (!restream_ip_arg.empty()) {
-			restream_set_pinned_ip(restream_ip_arg.c_str());
-			restream_set_manual_ip(restream_ip_arg.c_str());
-			restream_set_enabled(true);
-		}
-
-		if (config["os_sensors"] && config["os_sensors"].IsMap()) {
-			if (config["os_sensors"]["cpu"]) {
-				auto cpu = config["os_sensors"]["cpu"];
-				if(cpu.IsScalar() && cpu.as<std::string>() == "auto") {
-					os_sensors.discoverCPU();
-				} else {
-					os_sensors.addCPU();
-				}
-			}
-			if (config["os_sensors"]["power"]) {
-				auto power = config["os_sensors"]["power"];
-				if(power.IsScalar() && power.as<std::string>() == "auto") {
-					os_sensors.discoverPower();
-				} else {
-					for (const auto& power_sensor : power) {
-						std::string type = power_sensor["type"].as<std::string>();
-						std::string hwmon_id = power_sensor["hwmon_id"].as<std::string>();
-						os_sensors.addPower(type, hwmon_id);
-					}
-				}
-			}
-			if (config["os_sensors"]["temperature"]) {
-				auto temperature = config["os_sensors"]["temperature"];
-				if(temperature.IsScalar() && temperature.as<std::string>() == "auto") {
-					os_sensors.discoverTemperature();
-				} else {
-					for (const auto& temp_sensor : temperature) {
-						std::string thermal_zone = temp_sensor["thermal_zone"].as<std::string>();
-						os_sensors.addTemperature(thermal_zone);
-					}
-				}
-			}
-		} else {
-			spdlog::error("Unexpected format of config file 'os_sensors'!");
-		}
-		os_sensors.addMemory();
-
-	} catch (const YAML::BadFile& e) {
-		std::cout << "Configuration file " << config_file_path << " not found." << std::endl;
-	} catch (const YAML::ParserException& e) {
-		std::cerr << "Error parsing configuration: " << e.what() << std::endl;
-	} catch (const YAML::Exception& e) {
-		std::cerr << "Configuration error: " << e.what() << std::endl;
+	// Finalize restream-ip: YAML restream.ip set restream_ip_arg earlier;
+	// CLI --restream-ip overrides it. Apply whichever survives.
+	if (!restream_ip_arg.empty()) {
+		restream_set_pinned_ip(restream_ip_arg.c_str());
+		restream_set_manual_ip(restream_ip_arg.c_str());
+		restream_set_enabled(true);
 	}
 
 	spdlog::info("disable_vsync: {}", disable_vsync);
@@ -1991,6 +2097,17 @@ int main(int argc, char **argv)
 		fprintf(stderr,
 				"cannot initialize display. Is display connected? Is --screen-mode correct?\n");
 		return -2;
+	}
+
+	// Default re-encode resolution/fps to the negotiated display mode so that
+	// display restream and DVR re-encode match what is shown on screen without
+	// requiring explicit configuration.
+	if (!reenc_resolution_explicit) {
+		reenc_params.resolution = (output_list->mode.vdisplay >= 1080)
+		    ? EncResolution::Res1080p : EncResolution::Res720p;
+	}
+	if (!reenc_fps_explicit && output_list->mode.vrefresh > 0) {
+		reenc_params.fps = (int)output_list->mode.vrefresh;
 	}
 
 	gamma_lut_controller_init(&lut_ctrl, drm_fd, output_list);
@@ -2055,14 +2172,13 @@ int main(int argc, char **argv)
 		}
 	}
 
-	// Display-only restream (no DVR): lower defaults for stream-friendliness.
-	// Don't lower when display DVR is also configured (needs higher quality).
+	// Display-only restream (no DVR): if bitrate is still at the built-in default
+	// lower it to something stream-friendly. Resolution and fps now default to the
+	// negotiated display mode (set above) and are not auto-lowered here.
 	bool have_display_dvr = stream_dvr_cfgs.count(-1) > 0;
 	if (display_restream && !dvr_template && !have_display_dvr) {
 		if (reenc_params.bitrate_kbps == 8000)
-			reenc_params.bitrate_kbps = 1500;
-		if (reenc_params.resolution == EncResolution::Res1080p)
-			reenc_params.resolution = EncResolution::Res720p;
+			reenc_params.bitrate_kbps = 4000;
 	}
 
 	pthread_t tid_frame, tid_display, tid_osd, tid_mavlink, tid_wfbcli;
@@ -2198,8 +2314,13 @@ int main(int argc, char **argv)
 	if (enable_osd) {
 		nlohmann::json osd_config;
 		if(osd_config_path != "") {
-			std::ifstream f(osd_config_path);
-			osd_config = nlohmann::json::parse(f, nullptr, true, true);
+			try {
+				std::ifstream f(osd_config_path);
+				osd_config = nlohmann::json::parse(f, nullptr, true, true);
+			} catch (const std::exception& e) {
+				spdlog::error("Failed to parse OSD config {}: {} — using empty config", osd_config_path, e.what());
+				osd_config = {};
+			}
 		} else {
 			osd_config = {};
 		}

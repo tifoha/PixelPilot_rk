@@ -1200,10 +1200,12 @@ public:
 		cairo_save(cr);
 		cairo_translate(cr, cx, cy);
 		for (auto* child : children) {
+			cairo_save(cr);
 			try { child->draw(cr); }
 			catch (const std::exception& e) {
 				spdlog::warn("BoxWidgetContainer child draw error: {}", e.what());
 			}
+			cairo_restore(cr);
 		}
 		cairo_restore(cr);
 	}
@@ -1671,11 +1673,25 @@ protected:
 
 class DebugWidget: public Widget {
 public:
-	DebugWidget(int pos_x, int pos_y, uint num_args) :
-		Widget(pos_x, pos_y, num_args) {};
+	DebugWidget(int pos_x, int pos_y, uint num_args, double bg_r, double bg_g, double bg_b, double bg_alpha) :
+		Widget(pos_x, pos_y, num_args), bg_r_(bg_r), bg_g_(bg_g), bg_b_(bg_b), bg_alpha_(bg_alpha) {};
 
 	void draw(cairo_t *cr) {
 		auto [x, y] = xy(cr);
+
+		if (bg_alpha_ > 0.0 && !args.empty()) {
+			double max_w = 0;
+			for (Fact &fact : args) {
+				cairo_text_extents_t ext;
+				cairo_text_extents(cr, fact.asVerboseString().c_str(), &ext);
+				if (ext.width > max_w) max_w = ext.width;
+			}
+			int h = (int)args.size() * 20;
+			cairo_set_source_rgba(cr, bg_r_, bg_g_, bg_b_, bg_alpha_);
+			cairo_rectangle(cr, x - 4, y - 14, max_w + 8, h + 4);
+			cairo_fill(cr);
+		}
+
 		auto y_offset = y;
 		for (Fact &fact : args) {
 			std::string text = fact.asVerboseString();
@@ -1686,6 +1702,9 @@ public:
 			SPDLOG_INFO("dbg draw {}", text);
 		}
 	}
+
+private:
+	double bg_r_, bg_g_, bg_b_, bg_alpha_;
 };
 
 class ExternalSurfaceWidget: public Widget {
@@ -2516,9 +2535,11 @@ public:
         if (idx == 0) {
             if (fact.getType() == Fact::T_DOUBLE)     roll_rad_  = fact.getDoubleValue();
             else if (fact.getType() == Fact::T_INT)   roll_rad_  = (double)fact.getIntValue();
+            has_roll_ = true;
         } else if (idx == 1) {
             if (fact.getType() == Fact::T_DOUBLE)     pitch_rad_ = fact.getDoubleValue();
             else if (fact.getType() == Fact::T_INT)   pitch_rad_ = (double)fact.getIntValue();
+            has_pitch_ = true;
         } else {
             spdlog::error("ArtificialHorizonWidget: unexpected setFact idx {}", idx);
         }
@@ -2680,6 +2701,8 @@ private:
     double bg_alpha_;
     double roll_rad_  = 0.0;
     double pitch_rad_ = 0.0;
+    bool   has_roll_  = false;
+    bool   has_pitch_ = false;
 };
 
 // ----------------------------------------------------------------------------
@@ -2708,8 +2731,6 @@ public:
     }
 
     void draw(cairo_t *cr) override {
-        if (!has_value_) return;
-
         auto [ox, oy] = xy(cr);
         double cy = oy + height_ / 2.0;
         double ppu = (height_ / 2.0) / range_;
@@ -2774,7 +2795,8 @@ public:
         cairo_stroke(cr);
 
         char vbuf[16];
-        snprintf(vbuf, sizeof(vbuf), format_.c_str(), value_);
+        if (has_value_) snprintf(vbuf, sizeof(vbuf), format_.c_str(), value_);
+        else            snprintf(vbuf, sizeof(vbuf), "--");
         cairo_select_font_face(cr, "Roboto", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
         cairo_set_font_size(cr, 13.0);
         cairo_text_extents_t vext;
@@ -2822,6 +2844,235 @@ private:
     bool   has_value_ = false;
 };
 
+// BarWidget — horizontal or vertical bar gauge with optional color thresholds
+// Facts: 0=value
+// Config: width, height, orientation ("horizontal"|"vertical"),
+//         min_value, max_value, label, unit, format, show_value, bg_alpha,
+//         bar_color, warning_color, critical_color, warning_pct, critical_pct
+// warning_pct / critical_pct: fraction of range (0.0-1.0); negative = disabled
+// ----------------------------------------------------------------------------
+class BarWidget : public Widget {
+public:
+    BarWidget(int pos_x, int pos_y, int width, int height,
+              bool vertical, double min_val, double max_val,
+              const std::string& label, const std::string& unit,
+              const std::string& format, bool show_value, double bg_alpha,
+              double bar_r, double bar_g, double bar_b,
+              double warn_r, double warn_g, double warn_b,
+              double crit_r, double crit_g, double crit_b,
+              double warning_pct, double critical_pct)
+        : Widget(pos_x, pos_y, 0),
+          width_(width), height_(height), vertical_(vertical),
+          min_val_(min_val), max_val_(max_val),
+          label_(label), unit_(unit), format_(format),
+          show_value_(show_value), bg_alpha_(bg_alpha),
+          bar_r_(bar_r), bar_g_(bar_g), bar_b_(bar_b),
+          warn_r_(warn_r), warn_g_(warn_g), warn_b_(warn_b),
+          crit_r_(crit_r), crit_g_(crit_g), crit_b_(crit_b),
+          warning_pct_(warning_pct), critical_pct_(critical_pct) {}
+
+    void setFact(uint idx, Fact fact) override {
+        if (idx != 0) { spdlog::error("BarWidget: unexpected idx {}", idx); return; }
+        if      (fact.getType() == Fact::T_DOUBLE) value_ = fact.getDoubleValue();
+        else if (fact.getType() == Fact::T_INT)    value_ = (double)fact.getIntValue();
+        else if (fact.getType() == Fact::T_UINT)   value_ = (double)fact.getUintValue();
+        has_value_ = true;
+    }
+
+    void draw(cairo_t *cr) override {
+        auto [ox, oy] = xy(cr);
+
+        double pct = has_value_ ? std::clamp((value_ - min_val_) / (max_val_ - min_val_), 0.0, 1.0) : 0.0;
+
+        double fr, fg, fb;
+        if (critical_pct_ >= 0.0 && pct <= critical_pct_)     { fr = crit_r_; fg = crit_g_; fb = crit_b_; }
+        else if (warning_pct_ >= 0.0 && pct <= warning_pct_)  { fr = warn_r_; fg = warn_g_; fb = warn_b_; }
+        else                                                    { fr = bar_r_;  fg = bar_g_;  fb = bar_b_;  }
+
+        // Label above the bar
+        double label_h = 0.0;
+        if (!label_.empty()) {
+            label_h = 14.0;
+            cairo_select_font_face(cr, "Roboto", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+            cairo_set_font_size(cr, 11.0);
+            cairo_text_extents_t ext;
+            cairo_text_extents(cr, label_.c_str(), &ext);
+            cairo_set_source_rgba(cr, 1, 1, 1, 0.85);
+            cairo_move_to(cr, ox + width_ / 2.0 - ext.width / 2.0 - ext.x_bearing, oy + label_h - 2.0);
+            cairo_show_text(cr, label_.c_str());
+        }
+
+        double bx = ox, by = oy + label_h;
+        double bw = (double)width_, bh = height_ - label_h;
+
+        // Background
+        cairo_set_source_rgba(cr, 0, 0, 0, bg_alpha_);
+        cairo_rectangle(cr, bx, by, bw, bh);
+        cairo_fill(cr);
+
+        // Fill
+        const double pad = 2.0;
+        cairo_set_source_rgba(cr, fr, fg, fb, 0.88);
+        if (vertical_) {
+            double fill_h = pct * (bh - pad * 2);
+            cairo_rectangle(cr, bx + pad, by + bh - pad - fill_h, bw - pad * 2, fill_h);
+        } else {
+            double fill_w = pct * (bw - pad * 2);
+            cairo_rectangle(cr, bx + pad, by + pad, fill_w, bh - pad * 2);
+        }
+        cairo_fill(cr);
+
+        // Border
+        cairo_set_source_rgba(cr, 1, 1, 1, 0.35);
+        cairo_set_line_width(cr, 1.0);
+        cairo_rectangle(cr, bx, by, bw, bh);
+        cairo_stroke(cr);
+
+        // Value text centered in bar area
+        if (show_value_) {
+            char vbuf[32];
+            if (has_value_) snprintf(vbuf, sizeof(vbuf), format_.c_str(), value_);
+            else            snprintf(vbuf, sizeof(vbuf), "--");
+            std::string txt = has_value_ ? std::string(vbuf) + unit_ : std::string(vbuf);
+            cairo_select_font_face(cr, "Roboto", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+            cairo_set_font_size(cr, 11.0);
+            cairo_text_extents_t ext;
+            cairo_text_extents(cr, txt.c_str(), &ext);
+            cairo_set_source_rgba(cr, 1, 1, 1, 0.95);
+            cairo_move_to(cr, bx + bw / 2.0 - ext.width / 2.0 - ext.x_bearing,
+                              by + bh / 2.0 + ext.height * 0.35);
+            cairo_show_text(cr, txt.c_str());
+        }
+    }
+
+private:
+    int    width_, height_;
+    bool   vertical_;
+    double min_val_, max_val_;
+    std::string label_, unit_, format_;
+    bool   show_value_;
+    double bg_alpha_;
+    double bar_r_,  bar_g_,  bar_b_;
+    double warn_r_, warn_g_, warn_b_;
+    double crit_r_, crit_g_, crit_b_;
+    double warning_pct_, critical_pct_;
+    double value_     = 0.0;
+    bool   has_value_ = false;
+};
+
+// BatteryWidget — AA-style battery shape, fill color shifts by charge level
+// Facts: 0=voltage
+// Config: width, height, min_voltage, max_voltage,
+//         show_voltage, show_percent,
+//         ok_color, warning_color, critical_color,
+//         warning_pct (default 0.30), critical_pct (default 0.15)
+// ----------------------------------------------------------------------------
+class BatteryWidget : public Widget {
+public:
+    BatteryWidget(int pos_x, int pos_y, int width, int height,
+                  double min_v, double max_v,
+                  bool show_v, bool show_pct,
+                  double ok_r,   double ok_g,   double ok_b,
+                  double warn_r, double warn_g, double warn_b,
+                  double crit_r, double crit_g, double crit_b,
+                  double warning_pct, double critical_pct)
+        : Widget(pos_x, pos_y, 0),
+          width_(width), height_(height),
+          min_v_(min_v), max_v_(max_v),
+          show_v_(show_v), show_pct_(show_pct),
+          ok_r_(ok_r),   ok_g_(ok_g),   ok_b_(ok_b),
+          warn_r_(warn_r), warn_g_(warn_g), warn_b_(warn_b),
+          crit_r_(crit_r), crit_g_(crit_g), crit_b_(crit_b),
+          warning_pct_(warning_pct), critical_pct_(critical_pct) {}
+
+    void setFact(uint idx, Fact fact) override {
+        if (idx != 0) { spdlog::error("BatteryWidget: unexpected idx {}", idx); return; }
+        if      (fact.getType() == Fact::T_DOUBLE) voltage_ = fact.getDoubleValue();
+        else if (fact.getType() == Fact::T_INT)    voltage_ = (double)fact.getIntValue();
+        else if (fact.getType() == Fact::T_UINT)   voltage_ = (double)fact.getUintValue();
+        has_value_ = true;
+    }
+
+    void draw(cairo_t *cr) override {
+        auto [ox, oy] = xy(cr);
+
+        double pct = has_value_ ? std::clamp((voltage_ - min_v_) / (max_v_ - min_v_), 0.0, 1.0) : 0.0;
+
+        double fr, fg, fb;
+        if (pct <= critical_pct_)      { fr = crit_r_; fg = crit_g_; fb = crit_b_; }
+        else if (pct <= warning_pct_)  { fr = warn_r_; fg = warn_g_; fb = warn_b_; }
+        else                           { fr = ok_r_;   fg = ok_g_;   fb = ok_b_;   }
+
+        // Terminal: small bump on top, 40% width, centered
+        double term_h = std::max((double)height_ * 0.08, 6.0);
+        double term_w = width_ * 0.4;
+        double term_x = ox + (width_ - term_w) / 2.0;
+
+        // Body area
+        double body_x = ox, body_y = oy + term_h;
+        double body_w = (double)width_, body_h = height_ - term_h;
+        const double pad = 3.0;
+
+        // Body background
+        cairo_set_source_rgba(cr, 0.12, 0.12, 0.12, 0.90);
+        cairo_rectangle(cr, body_x, body_y, body_w, body_h);
+        cairo_fill(cr);
+
+        // Terminal cap
+        cairo_set_source_rgba(cr, 0.65, 0.65, 0.65, 0.95);
+        cairo_rectangle(cr, term_x, oy, term_w, term_h);
+        cairo_fill(cr);
+        cairo_set_source_rgba(cr, 0.85, 0.85, 0.85, 0.9);
+        cairo_set_line_width(cr, 1.0);
+        cairo_rectangle(cr, term_x, oy, term_w, term_h);
+        cairo_stroke(cr);
+
+        // Fill bar (bottom up)
+        double fill_h = pct * (body_h - pad * 2);
+        cairo_set_source_rgba(cr, fr, fg, fb, 0.90);
+        cairo_rectangle(cr, body_x + pad, body_y + body_h - pad - fill_h,
+                            body_w - pad * 2, fill_h);
+        cairo_fill(cr);
+
+        // Body border
+        cairo_set_source_rgba(cr, 0.80, 0.80, 0.80, 0.90);
+        cairo_set_line_width(cr, 1.5);
+        cairo_rectangle(cr, body_x, body_y, body_w, body_h);
+        cairo_stroke(cr);
+
+        // Text (voltage or percent)
+        std::string txt;
+        if (!has_value_) {
+            txt = "--";
+        } else if (show_pct_) {
+            char buf[12]; snprintf(buf, sizeof(buf), "%.0f%%", pct * 100.0); txt = buf;
+        } else if (show_v_) {
+            char buf[12]; snprintf(buf, sizeof(buf), "%.1fV", voltage_); txt = buf;
+        }
+        if (!txt.empty()) {
+            cairo_select_font_face(cr, "Roboto", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+            cairo_set_font_size(cr, 10.0);
+            cairo_text_extents_t ext;
+            cairo_text_extents(cr, txt.c_str(), &ext);
+            cairo_set_source_rgba(cr, 1, 1, 1, 0.95);
+            cairo_move_to(cr, body_x + body_w / 2.0 - ext.width / 2.0 - ext.x_bearing,
+                              body_y + body_h / 2.0 + ext.height * 0.35);
+            cairo_show_text(cr, txt.c_str());
+        }
+    }
+
+private:
+    int    width_, height_;
+    double min_v_, max_v_;
+    bool   show_v_, show_pct_;
+    double ok_r_,   ok_g_,   ok_b_;
+    double warn_r_, warn_g_, warn_b_;
+    double crit_r_, crit_g_, crit_b_;
+    double warning_pct_, critical_pct_;
+    double voltage_   = 0.0;
+    bool   has_value_ = false;
+};
+
 class Osd {
 public:
 	void loadConfig(json cfg) {
@@ -2863,11 +3114,13 @@ public:
 
 	void draw(cairo_t *cr) {
 		for(auto &widget : widgets) {
+			cairo_save(cr);
 			try {
 				widget->draw(cr);
 			} catch (const std::exception& e) {
 				spdlog::warn("OSD widget draw error: {}", e.what());
 			}
+			cairo_restore(cr);
 		}
 	};
 
@@ -3092,7 +3345,13 @@ private:
 			auto timeout_ms = widget_j.at("timeout_ms").template get<uint>();
 			return {new PopupWidget(x, y, timeout_ms, (uint)matchers.size()), matchers};
 		} else if (type == "DebugWidget") {
-			return {new DebugWidget(x, y, (uint)matchers.size()), matchers};
+			double bg_r = 0, bg_g = 0, bg_b = 0, bg_alpha = 0;
+			if (widget_j.contains("bg_color")) {
+				auto c = widget_j.at("bg_color");
+				bg_r = c.value("r", 0.0); bg_g = c.value("g", 0.0); bg_b = c.value("b", 0.0);
+			}
+			bg_alpha = widget_j.value("bg_alpha", 0.0);
+			return {new DebugWidget(x, y, (uint)matchers.size(), bg_r, bg_g, bg_b, bg_alpha), matchers};
 		} else if (type == "ArtificialHorizonWidget") {
 			int w  = widget_j.value("width",  400);
 			int h  = widget_j.value("height", 250);
@@ -3126,6 +3385,69 @@ private:
 			std::string fmt   = widget_j.value("format",    "%.0f");
 			double bg_alpha   = widget_j.value("bg_alpha",   0.5);
 			return {new VerticalTapeWidget(x, y, w, h, range, tint, unit, lside, fmt, bg_alpha), matchers};
+		} else if (type == "BarWidget") {
+			int w = widget_j.value("width",  20);
+			int h = widget_j.value("height", 100);
+			bool vert       = widget_j.value("orientation", std::string("vertical")) != "horizontal";
+			double min_val  = widget_j.value("min_value",   0.0);
+			double max_val  = widget_j.value("max_value", 100.0);
+			std::string lbl = widget_j.value("label",      "");
+			std::string unt = widget_j.value("unit",       "");
+			std::string fmt = widget_j.value("format",  "%.0f");
+			bool show_val   = widget_j.value("show_value", true);
+			double bg_alpha = widget_j.value("bg_alpha",   0.5);
+			double bar_r = 0.2, bar_g = 0.8, bar_b = 0.2;
+			if (widget_j.contains("bar_color")) {
+				auto c = widget_j.at("bar_color");
+				bar_r = c.value("r", 0.2); bar_g = c.value("g", 0.8); bar_b = c.value("b", 0.2);
+			}
+			double warn_r = 1.0, warn_g = 0.7, warn_b = 0.0;
+			if (widget_j.contains("warning_color")) {
+				auto c = widget_j.at("warning_color");
+				warn_r = c.value("r", 1.0); warn_g = c.value("g", 0.7); warn_b = c.value("b", 0.0);
+			}
+			double crit_r = 0.9, crit_g = 0.1, crit_b = 0.1;
+			if (widget_j.contains("critical_color")) {
+				auto c = widget_j.at("critical_color");
+				crit_r = c.value("r", 0.9); crit_g = c.value("g", 0.1); crit_b = c.value("b", 0.1);
+			}
+			double warn_pct = widget_j.value("warning_pct",  -1.0);
+			double crit_pct = widget_j.value("critical_pct", -1.0);
+			return {new BarWidget(x, y, w, h, vert, min_val, max_val, lbl, unt, fmt,
+			                      show_val, bg_alpha,
+			                      bar_r,  bar_g,  bar_b,
+			                      warn_r, warn_g, warn_b,
+			                      crit_r, crit_g, crit_b,
+			                      warn_pct, crit_pct), matchers};
+		} else if (type == "BatteryWidget") {
+			int w = widget_j.value("width",  40);
+			int h = widget_j.value("height", 80);
+			double min_v   = widget_j.value("min_voltage",  3.3);
+			double max_v   = widget_j.value("max_voltage",  4.2);
+			bool show_v    = widget_j.value("show_voltage",  true);
+			bool show_pct  = widget_j.value("show_percent", false);
+			double ok_r = 0.15, ok_g = 0.85, ok_b = 0.15;
+			if (widget_j.contains("ok_color")) {
+				auto c = widget_j.at("ok_color");
+				ok_r = c.value("r", 0.15); ok_g = c.value("g", 0.85); ok_b = c.value("b", 0.15);
+			}
+			double warn_r = 1.0, warn_g = 0.70, warn_b = 0.0;
+			if (widget_j.contains("warning_color")) {
+				auto c = widget_j.at("warning_color");
+				warn_r = c.value("r", 1.0); warn_g = c.value("g", 0.7); warn_b = c.value("b", 0.0);
+			}
+			double crit_r = 0.9, crit_g = 0.1, crit_b = 0.1;
+			if (widget_j.contains("critical_color")) {
+				auto c = widget_j.at("critical_color");
+				crit_r = c.value("r", 0.9); crit_g = c.value("g", 0.1); crit_b = c.value("b", 0.1);
+			}
+			double warn_pct = widget_j.value("warning_pct",  0.30);
+			double crit_pct = widget_j.value("critical_pct", 0.15);
+			return {new BatteryWidget(x, y, w, h, min_v, max_v, show_v, show_pct,
+			                          ok_r,   ok_g,   ok_b,
+			                          warn_r, warn_g, warn_b,
+			                          crit_r, crit_g, crit_b,
+			                          warn_pct, crit_pct), matchers};
 		} else if (type == "HeadingTapeWidget") {
 			int w    = widget_j.contains("width")            ? widget_j.at("width").get<int>()            : 400;
 			int h    = widget_j.contains("height")           ? widget_j.at("height").get<int>()           : 50;
